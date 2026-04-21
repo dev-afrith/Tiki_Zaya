@@ -1,6 +1,8 @@
 const admin = require('firebase-admin');
 const path = require('path');
+const jwt = require('jsonwebtoken');
 const User = require('../models/User');
+const { applyDailyLoginBonus, awardFirstLoginBonus, ensureGamificationState } = require('../utils/gamification');
 
 // Initialize Firebase Admin
 try {
@@ -19,6 +21,22 @@ const verifyToken = async (idToken) => {
   return await admin.auth().verifyIdToken(idToken);
 };
 
+const verifyLegacyToken = (token) => {
+  const secret = process.env.JWT_SECRET || process.env.JWT_KEY || process.env.SECRET_KEY;
+  if (!secret) return null;
+
+  try {
+    return jwt.verify(token, secret);
+  } catch (_) {
+    return null;
+  }
+};
+
+const getLegacyUserId = (decoded) => {
+  if (!decoded) return '';
+  return (decoded.uid || decoded.userId || decoded.id || decoded._id || decoded.sub || '').toString();
+};
+
 const authMiddleware = async (req, res, next) => {
   try {
     const authHeader = req.headers.authorization;
@@ -27,14 +45,31 @@ const authMiddleware = async (req, res, next) => {
     }
 
     const idToken = authHeader.split('Bearer ')[1];
-    
-    // Verify the Firebase ID Token
-    const decodedToken = await verifyToken(idToken);
-    const uid = decodedToken.uid;
-    
-    // Step 6: User Creation (MongoDB) - Check and auto-create user
-    const decodedEmail = decodedToken.email || '';
-    const decodedPhone = decodedToken.phone_number || '';
+
+    let uid = '';
+    let decodedEmail = '';
+    let decodedPhone = '';
+    let authProvider = '';
+
+    try {
+      // Verify the Firebase ID Token
+      const decodedToken = await verifyToken(idToken);
+      uid = decodedToken.uid;
+      decodedEmail = decodedToken.email || '';
+      decodedPhone = decodedToken.phone_number || '';
+      authProvider = decodedToken.firebase?.sign_in_provider || '';
+    } catch (firebaseError) {
+      const legacyToken = verifyLegacyToken(idToken);
+      uid = getLegacyUserId(legacyToken);
+      decodedEmail = legacyToken?.email || '';
+      decodedPhone = legacyToken?.phone || legacyToken?.phone_number || '';
+      authProvider = uid ? 'legacy_jwt' : '';
+
+      if (!uid) {
+        console.error('Firebase Auth Error:', firebaseError.message);
+        return res.status(401).json({ message: 'Invalid or expired authentication token' });
+      }
+    }
 
     let user = await User.findById(uid);
     if (!user) {
@@ -45,8 +80,23 @@ const authMiddleware = async (req, res, next) => {
         phone: decodedPhone,
         role: 'user',
         status: 'active',
-        username: null // Onboarding will fill this later
+        username: null, // Onboarding will fill this later
+        gamification: {
+          points: 0,
+          firstLoginAt: null,
+          welcomeBonusGrantedAt: null,
+          lastLoginAt: null,
+          streakDays: 0,
+          longestStreak: 0,
+          streakRewardsClaimed: [],
+          watchSecondsToday: 0,
+          watchRewardedMinutesToday: 0,
+          watchSecondsTotal: 0,
+          likesGivenTotal: 0,
+          commentsGivenTotal: 0,
+        },
       });
+      awardFirstLoginBonus(user);
       await user.save();
     } else {
       const nextEmail = decodedEmail || user.email || '';
@@ -77,6 +127,12 @@ const authMiddleware = async (req, res, next) => {
     if (user.status === 'blocked') {
       return res.status(403).json({ message: 'Account is blocked' });
     }
+
+    ensureGamificationState(user);
+    const loginReward = applyDailyLoginBonus(user);
+    if (loginReward.awarded) {
+      await user.save();
+    }
     
     // Attach UID and user object to the request
     req.userId = uid;
@@ -84,7 +140,7 @@ const authMiddleware = async (req, res, next) => {
     req.authIdentity = {
       email: decodedEmail,
       phone: decodedPhone,
-      provider: decodedToken.firebase?.sign_in_provider || '',
+      provider: authProvider,
     };
     
     next();

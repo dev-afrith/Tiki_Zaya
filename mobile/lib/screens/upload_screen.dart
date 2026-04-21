@@ -78,7 +78,7 @@ class _UploadScreenState extends State<UploadScreen> {
     final picker = ImagePicker();
     final video = await picker.pickVideo(
       source: source,
-      maxDuration: const Duration(seconds: 60),
+      maxDuration: const Duration(seconds: 90),
     );
     
     if (video != null) {
@@ -105,8 +105,8 @@ class _UploadScreenState extends State<UploadScreen> {
       if (!mounted) return;
       setState(() {
         _selectedDuration = duration;
-        _isOverDurationLimit = duration.inSeconds > 60;
-        _message = _isOverDurationLimit ? 'Video must be 60 seconds or less' : 'Video ready to post';
+        _isOverDurationLimit = duration.inSeconds > 90;
+        _message = _isOverDurationLimit ? 'Video must be 90 seconds or less' : 'Video ready to post';
       });
     } catch (e) {
       if (mounted) {
@@ -131,9 +131,9 @@ class _UploadScreenState extends State<UploadScreen> {
 
   Future<void> _handleUpload() async {
     if (_selectedFile == null) return;
-    if (_selectedDuration != null && _selectedDuration!.inSeconds > 60) {
+    if (_selectedDuration != null && _selectedDuration!.inSeconds > 90) {
       setState(() {
-        _message = 'Video must be 60 seconds or less';
+        _message = 'Video must be 90 seconds or less';
       });
       return;
     }
@@ -188,8 +188,9 @@ class _UploadScreenState extends State<UploadScreen> {
           _editingMetadata = null;
         });
       } else {
+        final errorMsg = result['error']?.toString() ?? result['data']?['message']?.toString() ?? 'Upload failed';
         setState(() {
-          _message = '❌ ${result['error'] ?? 'Upload failed'}';
+          _message = '❌ $errorMsg';
         });
       }
     } catch (e) {
@@ -314,6 +315,15 @@ class _UploadScreenState extends State<UploadScreen> {
                   height: 48,
                   child: OutlinedButton.icon(
                     onPressed: () async {
+                      if (kIsWeb) {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          const SnackBar(
+                            content: Text('Video editing is available on mobile only. Upload your video directly!'),
+                            backgroundColor: Color(0xFFFF006E),
+                          ),
+                        );
+                        return;
+                      }
                       final result = await Navigator.push(
                         context,
                         MaterialPageRoute(
@@ -385,19 +395,50 @@ class _UploadScreenState extends State<UploadScreen> {
 
             const SizedBox(height: 32),
 
-            // Action Button
+            // Action Button — High Visibility
             SizedBox(
               width: double.infinity,
               height: 56,
-              child: ElevatedButton(
-                onPressed: (_isUploading || _selectedFile == null || _isOverDurationLimit) ? null : _handleUpload,
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: const Color(0xFFFF006E),
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+              child: DecoratedBox(
+                decoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(14),
+                  gradient: (_isUploading || _selectedFile == null || _isOverDurationLimit)
+                      ? null
+                      : const LinearGradient(
+                          colors: [Color(0xFFFF006E), Color(0xFFB86EF5)],
+                        ),
+                  color: (_isUploading || _selectedFile == null || _isOverDurationLimit)
+                      ? Colors.white.withValues(alpha: 0.08)
+                      : null,
+                  boxShadow: (_isUploading || _selectedFile == null || _isOverDurationLimit)
+                      ? []
+                      : [
+                          BoxShadow(
+                            color: const Color(0xFFFF006E).withValues(alpha: 0.35),
+                            blurRadius: 18,
+                            offset: const Offset(0, 6),
+                          ),
+                        ],
                 ),
-                child: Text(
-                  _isUploading ? 'PLEASE WAIT...' : 'SHARE VIDEO',
-                  style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold, letterSpacing: 1.2),
+                child: ElevatedButton(
+                  onPressed: (_isUploading || _selectedFile == null || _isOverDurationLimit) ? null : _handleUpload,
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.transparent,
+                    shadowColor: Colors.transparent,
+                    disabledBackgroundColor: Colors.transparent,
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                  ),
+                  child: Text(
+                    _isUploading ? 'PLEASE WAIT...' : 'SHARE VIDEO',
+                    style: TextStyle(
+                      fontSize: 17,
+                      fontWeight: FontWeight.w800,
+                      letterSpacing: 1.4,
+                      color: (_isUploading || _selectedFile == null || _isOverDurationLimit)
+                          ? Colors.white38
+                          : Colors.white,
+                    ),
+                  ),
                 ),
               ),
             ),

@@ -21,7 +21,7 @@ const {
 } = require('../controllers/videoController');
 
 const storage = multer.memoryStorage();
-const upload = multer({ storage, limits: { fileSize: 50 * 1024 * 1024 } }); // 50MB limit
+const upload = multer({ storage, limits: { fileSize: 100 * 1024 * 1024 } }); // 100MB limit
 
 router.post('/upload', auth, upload.single('video'), uploadVideo);
 router.get('/feed', getFeed);

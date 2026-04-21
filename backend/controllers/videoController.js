@@ -3,6 +3,7 @@ const mongoose = require('mongoose');
 const cloudinary = require('cloudinary').v2;
 const User = require('../models/User');
 const { createAndEmitNotification } = require('../utils/notifications');
+const { awardLikeBonus } = require('../utils/gamification');
 
 cloudinary.config({
   cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
@@ -50,8 +51,8 @@ exports.uploadVideo = async (req, res) => {
     const { caption, hashtags, mentions, thumbnailUrl, editingMetadata, videoDurationSeconds } = req.body;
 
     const parsedDuration = Number(videoDurationSeconds);
-    if (Number.isFinite(parsedDuration) && parsedDuration > 60) {
-      return res.status(400).json({ message: 'Video must be 60 seconds or less' });
+    if (Number.isFinite(parsedDuration) && parsedDuration > 90) {
+      return res.status(400).json({ message: 'Video must be 90 seconds or less' });
     }
     
     // Process hashtags and mentions (convert to arrays if strings)
@@ -222,6 +223,11 @@ exports.toggleLike = async (req, res) => {
     const index = video.likes.indexOf(req.userId);
     if (index === -1) {
       video.likes.push(req.userId);
+      const actor = await User.findById(req.userId);
+      if (actor) {
+        awardLikeBonus(actor);
+        await actor.save();
+      }
     } else {
       video.likes.splice(index, 1);
     }
