@@ -5,19 +5,10 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:dio/dio.dart' as dio;
+import '../config/api_config.dart';
 
 class ApiService {
-  // Auto-detect: use localhost for web, 10.0.2.2 for Android emulator
-  // For real device, change to your PC's WiFi IP (e.g. 192.168.x.x)
-  static String get baseUrl {
-    if (kIsWeb) {
-      return 'http://localhost:5001/api';
-    }
-    // Use 10.0.2.2 for Android Emulator to access host's localhost
-    return 'http://10.0.2.2:5001/api';
-  }
-
-  static String get socketBaseUrl => baseUrl.replaceAll('/api', '');
+  static String get socketBaseUrl => ApiConfig.baseUrl;
 
   static final _dio = dio.Dio(dio.BaseOptions(
     connectTimeout: const Duration(seconds: 30),
@@ -83,7 +74,7 @@ class ApiService {
   static Future<Map<String, dynamic>> register(
       String username, String email, String password) async {
     final response = await http.post(
-      Uri.parse('$baseUrl/auth/register'),
+      Uri.parse('${ApiConfig.baseUrl}/api/auth/register'),
       headers: {'Content-Type': 'application/json'},
       body: jsonEncode({'username': username, 'email': email, 'password': password}),
     );
@@ -92,7 +83,7 @@ class ApiService {
 
   static Future<Map<String, dynamic>> verifyOTP(String email, String otp) async {
     final response = await http.post(
-      Uri.parse('$baseUrl/auth/verify'),
+      Uri.parse('${ApiConfig.baseUrl}/api/auth/verify'),
       headers: {'Content-Type': 'application/json'},
       body: jsonEncode({'email': email, 'otp': otp}),
     );
@@ -101,7 +92,7 @@ class ApiService {
 
   static Future<Map<String, dynamic>> resendOTP(String email) async {
     final response = await http.post(
-      Uri.parse('$baseUrl/auth/resend'),
+      Uri.parse('${ApiConfig.baseUrl}/api/auth/resend'),
       headers: {'Content-Type': 'application/json'},
       body: jsonEncode({'email': email}),
     );
@@ -110,7 +101,7 @@ class ApiService {
 
   static Future<Map<String, dynamic>> login(String email, String password) async {
     final response = await http.post(
-      Uri.parse('$baseUrl/auth/login'),
+      Uri.parse('${ApiConfig.baseUrl}/api/auth/login'),
       headers: {'Content-Type': 'application/json'},
       body: jsonEncode({'email': email, 'password': password}),
     );
@@ -123,7 +114,7 @@ class ApiService {
 
   static Future<Map<String, dynamic>> forgotPassword(String email) async {
     final response = await http.post(
-      Uri.parse('$baseUrl/auth/forgot-password'),
+      Uri.parse('${ApiConfig.baseUrl}/api/auth/forgot-password'),
       headers: {'Content-Type': 'application/json'},
       body: jsonEncode({'email': email}),
     );
@@ -133,7 +124,7 @@ class ApiService {
   static Future<Map<String, dynamic>> resetPassword(
       String email, String otp, String newPassword) async {
     final response = await http.post(
-      Uri.parse('$baseUrl/auth/reset-password'),
+      Uri.parse('${ApiConfig.baseUrl}/api/auth/reset-password'),
       headers: {'Content-Type': 'application/json'},
       body: jsonEncode({
         'email': email,
@@ -148,7 +139,7 @@ class ApiService {
       String oldPassword, String newPassword) async {
     final token = await getToken();
     final response = await http.put(
-      Uri.parse('$baseUrl/auth/change-password'),
+      Uri.parse('${ApiConfig.baseUrl}/api/auth/change-password'),
       headers: {
         'Content-Type': 'application/json',
         'Authorization': 'Bearer $token',
@@ -165,7 +156,7 @@ class ApiService {
 
   static Future<Map<String, dynamic>> getFeed({int page = 1, int limit = 10}) async {
     final response = await http.get(
-      Uri.parse('$baseUrl/videos/feed?page=$page&limit=$limit'),
+      Uri.parse('${ApiConfig.baseUrl}/api/videos/feed?page=$page&limit=$limit'),
     );
     return jsonDecode(response.body);
   }
@@ -173,7 +164,7 @@ class ApiService {
   static Future<List<dynamic>> getUserVideos(String userId) async {
     final token = await getToken();
     final response = await http.get(
-      Uri.parse('$baseUrl/videos/user/$userId'),
+      Uri.parse('${ApiConfig.baseUrl}/api/videos/user/$userId'),
       headers: {'Authorization': 'Bearer $token'},
     );
     return jsonDecode(response.body);
@@ -184,7 +175,7 @@ class ApiService {
     final token = await getToken();
     final request = http.MultipartRequest(
       'POST',
-      Uri.parse('$baseUrl/videos/upload'),
+      Uri.parse('${ApiConfig.baseUrl}/api/videos/upload'),
     );
     request.headers['Authorization'] = 'Bearer $token';
     request.fields['caption'] = caption;
@@ -214,7 +205,7 @@ class ApiService {
     Function(double)? onProgress,
   }) async {
     final token = await getToken();
-    final url = '$baseUrl/videos/upload';
+    final url = Uri.parse('${ApiConfig.baseUrl}/api/videos/upload').toString();
 
     // Parse hashtags and mentions
     final hashtags = RegExp(r'#(\w+)').allMatches(caption).map((m) => m.group(1)!).toList();
@@ -271,7 +262,7 @@ class ApiService {
   static Future<Map<String, dynamic>> getInboxData() async {
     final token = await getToken();
     final response = await http.get(
-      Uri.parse('$baseUrl/messages/inbox'),
+      Uri.parse('${ApiConfig.baseUrl}/api/messages/inbox'),
       headers: {'Authorization': 'Bearer $token'},
     );
     final data = jsonDecode(response.body);
@@ -289,7 +280,7 @@ class ApiService {
   static Future<List<dynamic>> getConversation(String userId) async {
     final token = await getToken();
     final response = await http.get(
-      Uri.parse('$baseUrl/messages/$userId'),
+      Uri.parse('${ApiConfig.baseUrl}/api/messages/$userId'),
       headers: {'Authorization': 'Bearer $token'},
 
     );
@@ -304,7 +295,7 @@ class ApiService {
   }) async {
     final token = await getToken();
     final response = await http.post(
-      Uri.parse('$baseUrl/messages/$userId'),
+      Uri.parse('${ApiConfig.baseUrl}/api/messages/$userId'),
       headers: {
         'Content-Type': 'application/json',
         'Authorization': 'Bearer $token',
@@ -321,7 +312,7 @@ class ApiService {
   static Future<Map<String, dynamic>> getUnreadMessagesCount() async {
     final token = await getToken();
     final response = await http.get(
-      Uri.parse('$baseUrl/messages/unread-count'),
+      Uri.parse('${ApiConfig.baseUrl}/api/messages/unread-count'),
       headers: {'Authorization': 'Bearer $token'},
     );
     return jsonDecode(response.body);
@@ -330,7 +321,7 @@ class ApiService {
   static Future<void> markConversationRead(String userId) async {
     final token = await getToken();
     await http.put(
-      Uri.parse('$baseUrl/messages/read/$userId'),
+      Uri.parse('${ApiConfig.baseUrl}/api/messages/read/$userId'),
       headers: {'Authorization': 'Bearer $token'},
     );
   }
@@ -338,7 +329,7 @@ class ApiService {
   static Future<Map<String, dynamic>> toggleLike(String videoId) async {
     final token = await getToken();
     final response = await http.put(
-      Uri.parse('$baseUrl/videos/like/$videoId'),
+      Uri.parse('${ApiConfig.baseUrl}/api/videos/like/$videoId'),
       headers: {'Authorization': 'Bearer $token'},
     );
     return jsonDecode(response.body);
@@ -347,7 +338,7 @@ class ApiService {
   static Future<Map<String, dynamic>> toggleFavorite(String videoId) async {
     final token = await getToken();
     final response = await http.put(
-      Uri.parse('$baseUrl/videos/favorite/$videoId'),
+      Uri.parse('${ApiConfig.baseUrl}/api/videos/favorite/$videoId'),
       headers: {'Authorization': 'Bearer $token'},
     );
     return jsonDecode(response.body);
@@ -355,31 +346,31 @@ class ApiService {
 
   static Future<void> incrementVideoView(String videoId) async {
     try {
-      await http.put(Uri.parse('$baseUrl/videos/view/$videoId'));
+      await http.put(Uri.parse('${ApiConfig.baseUrl}/api/videos/view/$videoId'));
     } catch (_) {
       // Slient fail for views
     }
   }
 
   static Future<Map<String, dynamic>> incrementVideoShare(String videoId) async {
-    final response = await http.put(Uri.parse('$baseUrl/videos/share/$videoId'));
+    final response = await http.put(Uri.parse('${ApiConfig.baseUrl}/api/videos/share/$videoId'));
     return jsonDecode(response.body);
   }
 
   static Future<Map<String, dynamic>> getVideoStats(String videoId) async {
-    final response = await http.get(Uri.parse('$baseUrl/videos/stats/$videoId'));
+    final response = await http.get(Uri.parse('${ApiConfig.baseUrl}/api/videos/stats/$videoId'));
     return jsonDecode(response.body);
   }
 
   static Future<Map<String, dynamic>> getVideoById(String videoId) async {
-    final response = await http.get(Uri.parse('$baseUrl/videos/single/$videoId'));
+    final response = await http.get(Uri.parse('${ApiConfig.baseUrl}/api/videos/single/$videoId'));
     return jsonDecode(response.body);
   }
 
   static Future<Map<String, dynamic>> archiveVideo(String videoId) async {
     final token = await getToken();
     final response = await http.put(
-      Uri.parse('$baseUrl/videos/archive/$videoId'),
+      Uri.parse('${ApiConfig.baseUrl}/api/videos/archive/$videoId'),
       headers: {'Authorization': 'Bearer $token'},
     );
     return jsonDecode(response.body);
@@ -388,7 +379,7 @@ class ApiService {
   static Future<Map<String, dynamic>> unarchiveVideo(String videoId) async {
     final token = await getToken();
     final response = await http.put(
-      Uri.parse('$baseUrl/videos/unarchive/$videoId'),
+      Uri.parse('${ApiConfig.baseUrl}/api/videos/unarchive/$videoId'),
       headers: {'Authorization': 'Bearer $token'},
     );
     return jsonDecode(response.body);
@@ -397,7 +388,7 @@ class ApiService {
   static Future<List<dynamic>> getArchivedVideos() async {
     final token = await getToken();
     final response = await http.get(
-      Uri.parse('$baseUrl/videos/archived/me'),
+      Uri.parse('${ApiConfig.baseUrl}/api/videos/archived/me'),
       headers: {'Authorization': 'Bearer $token'},
     );
     return jsonDecode(response.body);
@@ -406,7 +397,7 @@ class ApiService {
   static Future<Map<String, dynamic>> deleteVideo(String videoId) async {
     final token = await getToken();
     final response = await http.delete(
-      Uri.parse('$baseUrl/videos/$videoId'),
+      Uri.parse('${ApiConfig.baseUrl}/api/videos/$videoId'),
       headers: {'Authorization': 'Bearer $token'},
     );
     return jsonDecode(response.body);
@@ -414,7 +405,7 @@ class ApiService {
 
   static Future<Map<String, dynamic>?> getDiscoveryData() async {
     try {
-      final response = await http.get(Uri.parse('$baseUrl/videos/discovery'));
+      final response = await http.get(Uri.parse('${ApiConfig.baseUrl}/api/videos/discovery'));
       return jsonDecode(response.body);
     } catch (e) {
       return null;
@@ -424,7 +415,7 @@ class ApiService {
   static Future<Map<String, dynamic>> searchHashtagsAndVideos(String query) async {
     try {
       final response = await http.get(
-        Uri.parse('$baseUrl/videos/search?query=${Uri.encodeComponent(query)}'),
+        Uri.parse('${ApiConfig.baseUrl}/api/videos/search?query=${Uri.encodeComponent(query)}'),
       );
       return jsonDecode(response.body);
     } catch (e) {
@@ -436,7 +427,7 @@ class ApiService {
 
   static Future<List<dynamic>> getComments(String videoId) async {
     final response = await http.get(
-      Uri.parse('$baseUrl/comments/$videoId'),
+      Uri.parse('${ApiConfig.baseUrl}/api/comments/$videoId'),
     );
     return jsonDecode(response.body);
   }
@@ -445,7 +436,7 @@ class ApiService {
       String videoId, String text, String parentCommentId) async {
     final token = await getToken();
     final response = await http.post(
-      Uri.parse('$baseUrl/comments/$videoId'),
+      Uri.parse('${ApiConfig.baseUrl}/api/comments/$videoId'),
       headers: {
         'Content-Type': 'application/json',
         'Authorization': 'Bearer $token',
@@ -461,7 +452,7 @@ class ApiService {
   static Future<Map<String, dynamic>> toggleCommentLike(String commentId) async {
     final token = await getToken();
     final response = await http.put(
-      Uri.parse('$baseUrl/comments/like/$commentId'),
+      Uri.parse('${ApiConfig.baseUrl}/api/comments/like/$commentId'),
       headers: {'Authorization': 'Bearer $token'},
     );
     return jsonDecode(response.body);
@@ -470,7 +461,7 @@ class ApiService {
   static Future<Map<String, dynamic>> deleteComment(String commentId) async {
     final token = await getToken();
     final response = await http.delete(
-      Uri.parse('$baseUrl/comments/$commentId'),
+      Uri.parse('${ApiConfig.baseUrl}/api/comments/$commentId'),
       headers: {'Authorization': 'Bearer $token'},
     );
     return jsonDecode(response.body);
@@ -480,7 +471,7 @@ class ApiService {
       String videoId, String text) async {
     final token = await getToken();
     final response = await http.post(
-      Uri.parse('$baseUrl/comments/$videoId'),
+      Uri.parse('${ApiConfig.baseUrl}/api/comments/$videoId'),
       headers: {
         'Content-Type': 'application/json',
         'Authorization': 'Bearer $token',
@@ -494,7 +485,7 @@ class ApiService {
 
   static Future<Map<String, dynamic>> getProfile(String userId) async {
     final response = await http.get(
-      Uri.parse('$baseUrl/users/$userId'),
+      Uri.parse('${ApiConfig.baseUrl}/api/users/$userId'),
     );
     final data = jsonDecode(response.body);
     if (data is Map<String, dynamic>) {
@@ -507,7 +498,7 @@ class ApiService {
       Map<String, dynamic> data) async {
     final token = await getToken();
     final response = await http.put(
-      Uri.parse('$baseUrl/users/update'),
+      Uri.parse('${ApiConfig.baseUrl}/api/users/update'),
       headers: {
         'Content-Type': 'application/json',
         'Authorization': 'Bearer $token',
@@ -521,7 +512,7 @@ class ApiService {
     final token = await getToken();
     final request = http.MultipartRequest(
       'POST',
-      Uri.parse('$baseUrl/users/upload-profile-pic'),
+      Uri.parse('${ApiConfig.baseUrl}/api/users/upload-profile-pic'),
     );
     request.headers['Authorization'] = 'Bearer $token';
 
@@ -544,7 +535,7 @@ class ApiService {
   static Future<Map<String, dynamic>> toggleFollow(String userId) async {
     final token = await getToken();
     final response = await http.put(
-      Uri.parse('$baseUrl/users/follow/$userId'),
+      Uri.parse('${ApiConfig.baseUrl}/api/users/follow/$userId'),
       headers: {'Authorization': 'Bearer $token'},
     );
     return jsonDecode(response.body);
@@ -553,7 +544,7 @@ class ApiService {
   static Future<Map<String, dynamic>> togglePrivacy() async {
     final token = await getToken();
     final response = await http.put(
-      Uri.parse('$baseUrl/users/privacy'),
+      Uri.parse('${ApiConfig.baseUrl}/api/users/privacy'),
       headers: {'Authorization': 'Bearer $token'},
     );
     return jsonDecode(response.body);
@@ -562,7 +553,7 @@ class ApiService {
   static Future<Map<String, dynamic>> deleteAccount() async {
     final token = await getToken();
     final response = await http.delete(
-      Uri.parse('$baseUrl/users/delete-account'),
+      Uri.parse('${ApiConfig.baseUrl}/api/users/delete-account'),
       headers: {'Authorization': 'Bearer $token'},
     );
     return jsonDecode(response.body);
@@ -570,7 +561,7 @@ class ApiService {
 
   static Future<List<dynamic>> getSuggestedUsers() async {
     try {
-      final response = await http.get(Uri.parse('$baseUrl/users/suggested'));
+      final response = await http.get(Uri.parse('${ApiConfig.baseUrl}/api/users/suggested'));
       return jsonDecode(response.body);
     } catch (e) {
       return [];
@@ -580,7 +571,7 @@ class ApiService {
   static Future<Map<String, dynamic>> getNotifications() async {
     final token = await getToken();
     final response = await http.get(
-      Uri.parse('$baseUrl/notifications'),
+      Uri.parse('${ApiConfig.baseUrl}/api/notifications'),
       headers: {'Authorization': 'Bearer $token'},
     );
     return jsonDecode(response.body);
@@ -589,14 +580,14 @@ class ApiService {
   static Future<void> markAllNotificationsRead() async {
     final token = await getToken();
     await http.put(
-      Uri.parse('$baseUrl/notifications/read-all'),
+      Uri.parse('${ApiConfig.baseUrl}/api/notifications/read-all'),
       headers: {'Authorization': 'Bearer $token'},
     );
   }
 
   static Future<List<dynamic>> searchUsers(String query) async {
     final response = await http.get(
-      Uri.parse('$baseUrl/users/search?q=$query'),
+      Uri.parse('${ApiConfig.baseUrl}/api/users/search?q=$query'),
     );
     return jsonDecode(response.body);
   }
@@ -604,7 +595,7 @@ class ApiService {
   static Future<Map<String, dynamic>> toggleRepost(String videoId) async {
     final token = await getToken();
     final response = await http.put(
-      Uri.parse('$baseUrl/users/repost/$videoId'),
+      Uri.parse('${ApiConfig.baseUrl}/api/users/repost/$videoId'),
       headers: {'Authorization': 'Bearer $token'},
     );
     return jsonDecode(response.body);
@@ -612,8 +603,9 @@ class ApiService {
 
   static Future<List<dynamic>> getUserReposts(String userId) async {
     final response = await http.get(
-      Uri.parse('$baseUrl/users/$userId/reposts'),
+      Uri.parse('${ApiConfig.baseUrl}/api/users/$userId/reposts'),
     );
     return jsonDecode(response.body);
   }
 }
+

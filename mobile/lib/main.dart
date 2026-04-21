@@ -219,18 +219,11 @@ class _SplashRouterState extends State<SplashRouter> {
                     child: child,
                   );
                 },
-                child: ShaderMask(
-                  shaderCallback: (bounds) => const LinearGradient(
-                    colors: [Color(0xFFFF3B8E), Color(0xFF8B5CF6), Color(0xFF3B82F6)],
-                  ).createShader(bounds),
-                  child: Text(
-                    'TikiZaya',
-                    style: GoogleFonts.yellowtail(
-                      fontSize: 64,
-                      fontWeight: FontWeight.bold,
-                      color: Colors.white,
-                    ),
-                  ),
+                child: Image.asset(
+                  'assets/branding/logo.png',
+                  width: 240,
+                  fit: BoxFit.contain,
+                  filterQuality: FilterQuality.high,
                 ),
               ),
               const SizedBox(height: 16),

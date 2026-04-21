@@ -2,6 +2,7 @@ const express = require('express');
 const http = require('http');
 const mongoose = require('mongoose');
 const cors = require('cors');
+const helmet = require('helmet');
 const dotenv = require('dotenv');
 const { Server } = require('socket.io');
 const User = require('./models/User');
@@ -11,36 +12,60 @@ const { canSendMessage } = require('./utils/chatPermissions');
 
 dotenv.config();
 
-// Global Error Handlers
 process.on('unhandledRejection', (reason, promise) => {
-  console.error('❌ Unhandled Rejection at:', promise, 'reason:', reason);
+  console.error('Unhandled Rejection at:', promise, 'reason:', reason);
 });
 
 process.on('uncaughtException', (error) => {
-  console.error('❌ Uncaught Exception:', error);
+  console.error('Uncaught Exception:', error);
+  process.exit(1);
 });
 
 const app = express();
 const server = http.createServer(app);
 const PORT = process.env.PORT || 5001;
-let currentPort = Number(PORT);
+
+const allowedOrigins = (process.env.CLIENT_URL || '')
+  .split(',')
+  .map((origin) => origin.trim())
+  .filter(Boolean);
+
+const corsOptions = {
+  origin: (origin, callback) => {
+    if (!origin) {
+      callback(null, true);
+      return;
+    }
+
+    if (allowedOrigins.length === 0 || allowedOrigins.includes(origin)) {
+      callback(null, true);
+      return;
+    }
+
+    callback(new Error('Not allowed by CORS'));
+  },
+  credentials: true,
+};
 
 const io = new Server(server, {
-  cors: {
-    origin: '*',
-    methods: ['GET', 'POST'],
-  },
+  cors: { ...corsOptions, methods: ['GET', 'POST'] },
 });
 
 app.set('io', io);
 
 // Middleware
-app.use(cors());
+app.use(helmet());
+app.use(cors(corsOptions));
 app.use(express.json());
 
 // Global Request Logger
 app.use((req, res, next) => {
-  console.log(`[${new Date().toLocaleTimeString()}] ${req.method} ${req.url}`);
+  const start = Date.now();
+  res.on('finish', () => {
+    const durationMs = Date.now() - start;
+    const ts = new Date().toISOString();
+    console.log('[' + ts + '] ' + req.method + ' ' + req.originalUrl + ' ' + res.statusCode + ' - ' + durationMs + 'ms');
+  });
   next();
 });
 
@@ -55,11 +80,34 @@ app.get('/api/health', (req, res) => {
   res.status(200).json({ status: 'ok', message: 'Tiki Zaya API is running!' });
 });
 
+app.get('/', (req, res) => {
+  res.status(200).send('Tiki Zaya API is running 🚀');
+});
+
 app.use('/api/videos', videoRoutes);
 app.use('/api/comments', commentRoutes);
 app.use('/api/users', userRoutes);
 app.use('/api/messages', messageRoutes);
 app.use('/api/notifications', notificationRoutes);
+
+app.use((req, res) => {
+  res.status(404).json({ message: 'Route not found' });
+});
+
+app.use((err, req, res, next) => {
+  if (res.headersSent) {
+    next(err);
+    return;
+  }
+
+  if (err && err.message === 'Not allowed by CORS') {
+    res.status(403).json({ message: 'CORS error: origin not allowed' });
+    return;
+  }
+
+  console.error('Server error:', err);
+  res.status(500).json({ message: 'Internal server error' });
+});
 
 const onlineUsers = new Map();
 
@@ -132,30 +180,23 @@ io.on('connection', (socket) => {
   });
 });
 
-// Database connection
-console.log('Connecting to MongoDB...');
-mongoose.connect(process.env.MONGO_URI, {
-  serverSelectionTimeoutMS: 15000, // Wait 15s instead of 5s
-  socketTimeoutMS: 45000,         // Don't close connection during long uploads
-  family: 4                       // Use IPv4 to avoid DNS lag
-})
-  .then(() => console.log('✅ MongoDB Connected Successfully'))
-  .catch(err => {
-    console.error('❌ MongoDB Connection Error:');
-    console.error(err.message);
-  });
+async function startServer() {
+  try {
+    console.log('Connecting to MongoDB...');
+    await mongoose.connect(process.env.MONGO_URI, {
+      serverSelectionTimeoutMS: 15000,
+      socketTimeoutMS: 45000,
+      family: 4,
+    });
+    console.log('MongoDB connected');
 
-server.on('error', (error) => {
-  if (error.code === 'EADDRINUSE') {
-    console.warn(`⚠️ Port ${currentPort} is already in use. Trying ${currentPort + 1}...`);
-    currentPort += 1;
-    server.listen(currentPort, '0.0.0.0');
-    return;
+    server.listen(PORT, () => {
+      console.log('Server is running on port ' + PORT);
+    });
+  } catch (err) {
+    console.error('MongoDB connection failed:', err.message);
+    process.exit(1);
   }
+}
 
-  throw error;
-});
-
-server.listen(currentPort, '0.0.0.0', () => {
-  console.log(`🚀 Server is running on port ${currentPort}`);
-});
+startServer();

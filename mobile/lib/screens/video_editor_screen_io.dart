@@ -19,6 +19,8 @@ class VideoEditorScreen extends StatefulWidget {
 }
 
 class _VideoEditorScreenState extends State<VideoEditorScreen> {
+  static const String _brandLogoAsset = 'assets/branding/logo.png';
+
   final TextEditingController _textController = TextEditingController();
   final AudioRecorder _recorder = AudioRecorder();
   final VideoProcessingService _processor = createVideoProcessingService();
@@ -61,7 +63,7 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
 
   static const List<String> _effects = ['None', 'Blur', 'Glitch', 'Fade', 'Zoom'];
   static const List<double> _speeds = [0.5, 1.0, 1.5, 2.0];
-  static const List<String> _stickersCatalog = ['🔥', '❤️', '😍', '🎉', '✨', '💯', '👑', '🎵', '🎧', '💥'];
+  static const List<double> _logoStickerSizes = [72, 88, 104, 120, 136, 152, 168, 184];
 
   @override
   void initState() {
@@ -130,7 +132,7 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
   }
 
   Future<void> _pickMusic() async {
-    final result = await FilePicker.platform.pickFiles(type: FileType.audio);
+    final result = await FilePicker.pickFiles(type: FileType.audio);
     if (result?.files.single.path != null) {
       setState(() {
         _musicPath = result!.files.single.path!;
@@ -140,7 +142,7 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
   }
 
   Future<void> _pickVoice() async {
-    final result = await FilePicker.platform.pickFiles(type: FileType.audio);
+    final result = await FilePicker.pickFiles(type: FileType.audio);
     if (result?.files.single.path != null) {
       setState(() {
         _voicePath = result!.files.single.path!;
@@ -174,7 +176,7 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
   }
 
   Future<void> _pickClips() async {
-    final result = await FilePicker.platform.pickFiles(allowMultiple: true, type: FileType.video);
+    final result = await FilePicker.pickFiles(allowMultiple: true, type: FileType.video);
     if (result == null || result.files.isEmpty) return;
     setState(() {
       _clipPaths
@@ -195,10 +197,11 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
     });
   }
 
-  void _addSticker(String emoji) {
+  void _addSticker(double size) {
     setState(() {
-      _stickers.add(_StickerOverlay(emoji: emoji, position: const Offset(140, 180)));
-      _message = 'Sticker added';
+      _stickers.add(_StickerOverlay(position: const Offset(120, 160), size: size));
+      _stickerPath = _brandLogoAsset;
+      _message = 'Logo sticker added';
     });
   }
 
@@ -451,7 +454,7 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
       _ToolSpec(EditorTool.voice, 'Voice', Icons.mic_rounded),
       _ToolSpec(EditorTool.filters, 'Filters', Icons.auto_awesome_rounded),
       _ToolSpec(EditorTool.text, 'Text', Icons.text_fields_rounded),
-      _ToolSpec(EditorTool.stickers, 'Stickers', Icons.emoji_emotions_outlined),
+      _ToolSpec(EditorTool.stickers, 'Logo', Icons.image_outlined),
       _ToolSpec(EditorTool.speed, 'Speed', Icons.speed_rounded),
       _ToolSpec(EditorTool.effects, 'Effects', Icons.blur_on_rounded),
       _ToolSpec(EditorTool.beauty, 'Beauty', Icons.face_retouching_natural_rounded),
@@ -659,20 +662,40 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
 
   Widget _buildStickerPanel() {
     return _panel(
-      'Stickers',
+      'Logo Stickers',
       SizedBox(
-        height: 140,
+        height: 180,
         child: GridView.count(
-          crossAxisCount: 5,
+          crossAxisCount: 4,
           childAspectRatio: 1,
           shrinkWrap: true,
           physics: const NeverScrollableScrollPhysics(),
-          children: _stickersCatalog.map((emoji) {
+          children: _logoStickerSizes.map((size) {
             return GestureDetector(
-              onTap: () => _addSticker(emoji),
+              onTap: () => _addSticker(size),
               child: Card(
                 color: Colors.white10,
-                child: Center(child: Text(emoji, style: const TextStyle(fontSize: 26))),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12),
+                  side: const BorderSide(color: Colors.white12),
+                ),
+                child: Padding(
+                  padding: const EdgeInsets.all(8),
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Expanded(
+                        child: Image.asset(
+                          _brandLogoAsset,
+                          fit: BoxFit.contain,
+                          filterQuality: FilterQuality.high,
+                        ),
+                      ),
+                      const SizedBox(height: 6),
+                      Text('${size.toInt()}px', style: const TextStyle(color: Colors.white70, fontSize: 11)),
+                    ],
+                  ),
+                ),
               ),
             );
           }).toList(),
@@ -755,7 +778,15 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
             overlay.position = Offset(overlay.position.dx + details.delta.dx, overlay.position.dy + details.delta.dy);
           });
         },
-        child: Text(overlay.emoji, style: const TextStyle(fontSize: 42)),
+        child: SizedBox(
+          width: overlay.size,
+          height: overlay.size,
+          child: Image.asset(
+            _brandLogoAsset,
+            fit: BoxFit.contain,
+            filterQuality: FilterQuality.high,
+          ),
+        ),
       ),
     );
   }
@@ -869,13 +900,14 @@ class _TextOverlay {
 }
 
 class _StickerOverlay {
-  final String emoji;
   Offset position;
+  double size;
 
-  _StickerOverlay({required this.emoji, required this.position});
+  _StickerOverlay({required this.position, required this.size});
 
   Map<String, dynamic> toMap() => {
-        'emoji': emoji,
+        'asset': 'assets/branding/logo.png',
+        'size': size,
         'position': {'dx': position.dx, 'dy': position.dy},
       };
 }

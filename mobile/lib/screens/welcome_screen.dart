@@ -45,7 +45,7 @@ class _WelcomeScreenState extends State<WelcomeScreen>
           child: LayoutBuilder(
             builder: (context, constraints) {
               final viewportHeight = MediaQuery.of(context).size.height;
-              final logoSize = viewportHeight < 700 ? 76.0 : 88.0;
+              final logoWidth = viewportHeight < 700 ? 220.0 : 250.0;
               final topGap = viewportHeight < 700 ? 48.0 : 72.0;
               final preButtonGap = viewportHeight < 700 ? 44.0 : 68.0;
               final postButtonGap = viewportHeight < 700 ? 24.0 : 34.0;
@@ -59,38 +59,30 @@ class _WelcomeScreenState extends State<WelcomeScreen>
                     crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: [
                       SizedBox(height: topGap),
-                      ShaderMask(
-                        shaderCallback: (bounds) => const LinearGradient(
-                          begin: Alignment.topLeft,
-                          end: Alignment.bottomRight,
-                          colors: [Color(0xFFFF3B8E), Color(0xFF8B5CF6), Color(0xFF3B82F6)],
-                        ).createShader(bounds),
-                        child: Text(
-                          'TikiZaya',
-                          textAlign: TextAlign.center,
-                          style: GoogleFonts.yellowtail(
-                            fontSize: logoSize,
-                            fontWeight: FontWeight.w700,
-                            height: 1,
-                            color: Colors.white,
-                          ),
+                      Center(
+                        child: Image.asset(
+                          'assets/branding/logo.png',
+                          width: logoWidth,
+                          fit: BoxFit.contain,
+                          filterQuality: FilterQuality.high,
                         ),
                       ),
                       const SizedBox(height: 22),
                       Align(
                         alignment: Alignment.center,
                         child: Container(
-                          width: 96,
-                          height: 96,
+                          width: 128,
+                          height: 104,
+                          padding: const EdgeInsets.all(12),
                           decoration: BoxDecoration(
-                            borderRadius: BorderRadius.circular(28),
+                            borderRadius: BorderRadius.circular(24),
                             color: Colors.white.withValues(alpha: 0.08),
                             border: Border.all(color: Colors.white.withValues(alpha: 0.16)),
                           ),
-                          child: const Icon(
-                            Icons.emoji_emotions_outlined,
-                            color: Colors.white,
-                            size: 44,
+                          child: Image.asset(
+                            'assets/branding/logo.png',
+                            fit: BoxFit.contain,
+                            filterQuality: FilterQuality.high,
                           ),
                         ),
                       ),
