@@ -44,4 +44,25 @@ exports.createAndEmitNotification = async (io, data) => {
   return payload;
 };
 
+exports.createSystemNotification = async (io, data) => {
+  if (!data.userId) return null;
+
+  const notification = await Notification.create({
+    userId: data.userId.toString(),
+    actorUserId: data.actorUserId || 'system',
+    type: data.type,
+    title: data.title,
+    body: data.body,
+    entityType: data.entityType || '',
+    entityId: data.entityId ? data.entityId.toString() : '',
+  });
+
+  const payload = await buildPayload(notification);
+  if (io) {
+    io.to(notification.userId).emit('new_notification', payload);
+  }
+
+  return payload;
+};
+
 exports.buildNotificationPayload = buildPayload;

@@ -4,6 +4,15 @@ const Comment = require('../models/Comment');
 const Message = require('../models/Message');
 const Notification = require('../models/Notification');
 const cloudinary = require('cloudinary').v2;
+const {
+  isValidEmail,
+  isValidUsername,
+  normalizeEmail,
+  normalizePhone,
+  normalizeUsername,
+  parseValidDob,
+  verifyPassword,
+} = require('../utils/authSecurity');
 
 cloudinary.config({
   cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
@@ -18,6 +27,10 @@ exports.getProfile = async (req, res) => {
     if (!user) return res.status(404).json({ message: 'User not found' });
     res.status(200).json(user);
   } catch (error) {
+    if (error?.code === 11000) {
+      const key = Object.keys(error.keyPattern || error.keyValue || {})[0] || 'field';
+      return res.status(409).json({ message: `${key} is already registered` });
+    }
     res.status(500).json({ error: error.message });
   }
 };
@@ -41,12 +54,19 @@ exports.updateProfile = async (req, res) => {
       themePreference,
     } = req.body;
 
-    const currentUser = await User.findById(req.userId);
-    const normalizedUsername = (username ?? '').toString().trim().toLowerCase();
-    
-    // Username is immutable once set.
-    if (currentUser?.username && normalizedUsername && normalizedUsername != currentUser.username) {
-      return res.status(400).json({ message: 'Username cannot be changed after account creation' });
+    const currentUser = await User.findById(req.userId).select('+passwordHash');
+    const normalizedUsername = username == null ? '' : normalizeUsername(username);
+    const normalizedEmail = email == null ? '' : normalizeEmail(email);
+    const normalizedPhone = phone == null ? '' : normalizePhone(phone);
+
+    if (normalizedUsername && !isValidUsername(normalizedUsername)) {
+      return res.status(400).json({ message: 'Username must be 3-30 characters and use only lowercase letters, numbers, and underscores' });
+    }
+    if (normalizedEmail && !isValidEmail(normalizedEmail)) {
+      return res.status(400).json({ message: 'Please enter a valid email address' });
+    }
+    if (phone != null && !normalizedPhone) {
+      return res.status(400).json({ message: 'Please enter a valid phone number' });
     }
 
     // Check if username is taken by another user when first-time set.
@@ -55,6 +75,14 @@ exports.updateProfile = async (req, res) => {
       if (existingUser) {
         return res.status(400).json({ message: 'Username is already taken' });
       }
+    }
+    if (normalizedEmail) {
+      const existingUser = await User.findOne({ email: normalizedEmail, _id: { $ne: req.userId } });
+      if (existingUser) return res.status(400).json({ message: 'Email is already registered' });
+    }
+    if (normalizedPhone) {
+      const existingUser = await User.findOne({ phone: normalizedPhone, _id: { $ne: req.userId } });
+      if (existingUser) return res.status(400).json({ message: 'Phone number is already registered' });
     }
 
     const normalizedBio = bio == null ? null : bio.toString().trim();
@@ -89,14 +117,22 @@ exports.updateProfile = async (req, res) => {
 
     let parsedDateOfBirth;
     if (dateOfBirth != null && dateOfBirth.toString().trim() !== '') {
-      parsedDateOfBirth = new Date(dateOfBirth);
-      if (isNaN(parsedDateOfBirth.getTime())) {
-        return res.status(400).json({ message: 'Invalid date of birth' });
-      }
-      const minBirthDate = new Date();
-      minBirthDate.setFullYear(minBirthDate.getFullYear() - 13);
-      if (parsedDateOfBirth > minBirthDate) {
-        return res.status(400).json({ message: 'You must be at least 13 years old' });
+      const dobResult = parseValidDob(dateOfBirth);
+      if (dobResult.error) return res.status(400).json({ message: dobResult.error });
+      parsedDateOfBirth = dobResult.date;
+    }
+
+    const changesSensitiveField =
+      (normalizedUsername && normalizedUsername !== (currentUser?.username || '')) ||
+      (normalizedEmail && normalizedEmail !== (currentUser?.email || '')) ||
+      (normalizedPhone && normalizedPhone !== (currentUser?.phone || '')) ||
+      (parsedDateOfBirth && parsedDateOfBirth.toISOString() !== currentUser?.dateOfBirth?.toISOString());
+
+    if (changesSensitiveField && currentUser?.passwordHash) {
+      const currentPassword = (req.body.currentPassword || req.body.password || '').toString();
+      const ok = await verifyPassword(currentPassword, currentUser.passwordHash);
+      if (!ok) {
+        return res.status(401).json({ message: 'Current password is required to update account details' });
       }
     }
 
@@ -122,8 +158,8 @@ exports.updateProfile = async (req, res) => {
     if (profilePic !== undefined) updateData.profilePic = profilePic;
     if (profilePhotoUrl !== undefined) updateData.profilePhotoUrl = profilePhotoUrl;
     if (isPrivate !== undefined) updateData.isPrivate = isPrivate;
-    if (email) updateData.email = email;
-    if (phone) updateData.phone = phone;
+    if (normalizedEmail) updateData.email = normalizedEmail;
+    if (normalizedPhone) updateData.phone = normalizedPhone;
     if (country !== undefined) updateData.country = country;
     if (parsedDateOfBirth !== undefined) updateData.dateOfBirth = parsedDateOfBirth;
     if (category !== undefined) updateData.category = category;
@@ -303,6 +339,26 @@ exports.uploadProfileImage = async (req, res) => {
     );
 
     return res.status(200).json({ profilePic: result.secure_url, user });
+  } catch (error) {
+    return res.status(500).json({ error: error.message });
+  }
+};
+
+exports.saveDeviceToken = async (req, res) => {
+  try {
+    const token = (req.body.token || '').toString().trim();
+    const platform = (req.body.platform || '').toString().trim().slice(0, 30);
+    if (!token) return res.status(400).json({ message: 'Device token is required' });
+
+    const user = await User.findById(req.userId);
+    if (!user) return res.status(404).json({ message: 'User not found' });
+
+    user.fcmTokens = (user.fcmTokens || []).filter((item) => item.token !== token);
+    user.fcmTokens.push({ token, platform, updatedAt: new Date() });
+    user.fcmTokens = user.fcmTokens.slice(-5);
+    await user.save();
+
+    return res.status(200).json({ ok: true });
   } catch (error) {
     return res.status(500).json({ error: error.message });
   }

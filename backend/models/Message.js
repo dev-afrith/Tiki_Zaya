@@ -21,7 +21,7 @@ const messageSchema = new mongoose.Schema({
   },
   messageType: {
     type: String,
-    enum: ['text', 'reel'],
+    enum: ['text', 'reel', 'call', 'voice'],
     default: 'text',
     index: true,
   },

@@ -3,6 +3,7 @@ const fs = require('fs');
 const path = require('path');
 const jwt = require('jsonwebtoken');
 const User = require('../models/User');
+const { verifyAccessJwt } = require('../utils/authSecurity');
 
 const getFirebaseServiceAccount = () => {
   const json = process.env.FIREBASE_SERVICE_ACCOUNT_JSON;
@@ -54,6 +55,30 @@ const verifyToken = async (idToken) => {
   return await admin.auth().verifyIdToken(idToken);
 };
 
+const verifyAnyToken = async (token) => {
+  try {
+    if (admin.apps.length) {
+      const decodedToken = await verifyToken(token);
+      return {
+        uid: decodedToken.uid,
+        email: decodedToken.email || '',
+        phone: decodedToken.phone_number || '',
+        provider: decodedToken.firebase?.sign_in_provider || '',
+      };
+    }
+  } catch (_) {
+    // Fall through to JWT validation.
+  }
+
+  const decoded = verifyAccessJwt(token);
+  return {
+    uid: getLegacyUserId(decoded),
+    email: decoded.email || '',
+    phone: decoded.phone || decoded.phone_number || '',
+    provider: decoded.tokenUse === 'access' ? 'local_jwt' : 'legacy_jwt',
+  };
+};
+
 const verifyLegacyToken = (token) => {
   const secret = process.env.JWT_SECRET || process.env.JWT_KEY || process.env.SECRET_KEY;
   if (!secret) return null;
@@ -85,13 +110,12 @@ const authMiddleware = async (req, res, next) => {
     let authProvider = '';
 
     try {
-      // Verify the Firebase ID Token
-      const decodedToken = await verifyToken(idToken);
+      const decodedToken = await verifyAnyToken(idToken);
       uid = decodedToken.uid;
       decodedEmail = decodedToken.email || '';
-      decodedPhone = decodedToken.phone_number || '';
-      authProvider = decodedToken.firebase?.sign_in_provider || '';
-    } catch (firebaseError) {
+      decodedPhone = decodedToken.phone || '';
+      authProvider = decodedToken.provider || '';
+    } catch (authError) {
       const legacyToken = verifyLegacyToken(idToken);
       uid = getLegacyUserId(legacyToken);
       decodedEmail = legacyToken?.email || '';
@@ -99,7 +123,7 @@ const authMiddleware = async (req, res, next) => {
       authProvider = uid ? 'legacy_jwt' : '';
 
       if (!uid) {
-        console.error('Firebase Auth Error:', firebaseError.message);
+        console.error('Auth Error:', authError.message);
         return res.status(401).json({ message: 'Invalid or expired authentication token' });
       }
     }
@@ -157,10 +181,11 @@ const authMiddleware = async (req, res, next) => {
     
     next();
   } catch (error) {
-    console.error('Firebase Auth Error:', error.message);
+    console.error('Auth Error:', error.message);
     res.status(401).json({ message: 'Invalid or expired authentication token' });
   }
 };
 
 module.exports = authMiddleware;
 module.exports.verifyToken = verifyToken;
+module.exports.verifyAnyToken = verifyAnyToken;

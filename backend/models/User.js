@@ -2,27 +2,63 @@ const mongoose = require('mongoose');
 
 const userSchema = new mongoose.Schema({
   _id: {
-    type: String, // Firebase UID
+    type: String, // Firebase UID for social auth, generated UUID for local auth
     required: true
   },
   username: {
     type: String,
-    required: false, // Set to false to allow auto-creation of partial user documents
+    required: true,
     unique: true,
-    index: { unique: true, sparse: true }, // Allows multiple users to have a null username initially
     trim: true,
     lowercase: true,
     match: [/^[a-z0-9_]+$/, 'Please use only lowercase letters, numbers, and underscores']
   },
   email: {
     type: String,
+    required: true,
     unique: true,
     sparse: true
   },
   phone: {
     type: String,
-    unique: true,
-    sparse: true
+    required: true
+  },
+  passwordHash: {
+    type: String,
+    default: '',
+    select: false,
+  },
+  passwordUpdatedAt: {
+    type: Date,
+    default: null,
+  },
+  emailVerified: {
+    type: Boolean,
+    default: false,
+  },
+  phoneVerified: {
+    type: Boolean,
+    default: false,
+  },
+  refreshTokens: [{
+    tokenHash: { type: String, required: true, select: false },
+    device: { type: String, default: '' },
+    ip: { type: String, default: '' },
+    expiresAt: { type: Date, required: true },
+    createdAt: { type: Date, default: Date.now },
+  }],
+  passwordReset: {
+    otpHash: { type: String, default: '', select: false },
+    expiresAt: { type: Date, default: null },
+  },
+  fcmTokens: [{
+    token: { type: String, required: true },
+    platform: { type: String, default: '' },
+    updatedAt: { type: Date, default: Date.now },
+  }],
+  birthdayNotificationLastSentAt: {
+    type: Date,
+    default: null,
   },
   role: {
     type: String,
@@ -75,6 +111,25 @@ const userSchema = new mongoose.Schema({
     enum: ['light', 'dark'],
     default: 'dark',
   },
+  gamification: {
+    points: { type: Number, default: 0 },
+    welcomeBonusGrantedAt: { type: Date, default: null },
+    firstLoginAt: { type: Date, default: null },
+    lastLoginAt: { type: Date, default: null },
+    streakDays: { type: Number, default: 0 },
+    longestStreak: { type: Number, default: 0 },
+    streakRewardsClaimed: { type: [Number], default: [] },
+    completedTaskIds: { type: [String], default: [] },
+    claimedRewardIds: { type: [String], default: [] },
+    lastWatchAt: { type: Date, default: null },
+    watchSecondsToday: { type: Number, default: 0 },
+    watchRewardedMinutesToday: { type: Number, default: 0 },
+    watchSecondsTotal: { type: Number, default: 0 },
+    likesGivenTotal: { type: Number, default: 0 },
+    commentsGivenTotal: { type: Number, default: 0 },
+    uploadsTotal: { type: Number, default: 0 },
+    invitesTotal: { type: Number, default: 0 },
+  },
   nameChangeHistory: {
     type: [Date],
     default: [],
@@ -93,6 +148,15 @@ const userSchema = new mongoose.Schema({
 }, { 
   timestamps: true,
   _id: false // Disable auto-generation of ObjectIds because we use Firebase UIDs
+});
+
+userSchema.set('toJSON', {
+  transform: (_doc, ret) => {
+    delete ret.passwordHash;
+    delete ret.refreshTokens;
+    delete ret.passwordReset;
+    return ret;
+  },
 });
 
 module.exports = mongoose.model('User', userSchema);

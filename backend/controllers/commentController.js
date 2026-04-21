@@ -2,6 +2,7 @@ const Comment = require('../models/Comment');
 const Video = require('../models/Video');
 const User = require('../models/User');
 const { createAndEmitNotification } = require('../utils/notifications');
+const { awardCommentBonus } = require('../utils/gamification');
 
 // Add comment
 exports.addComment = async (req, res) => {
@@ -14,16 +15,22 @@ exports.addComment = async (req, res) => {
     });
     await comment.save();
 
+    const actor = await User.findById(req.userId);
+    if (actor) {
+      awardCommentBonus(actor);
+      await actor.save();
+    }
+
     const video = await Video.findByIdAndUpdate(req.params.videoId, { $inc: { commentsCount: 1 } }, { new: true });
 
-    const actor = await User.findById(req.userId).select('username');
-    if (video && actor) {
+    const actorProfile = actor?.toObject ? actor.toObject() : actor;
+    if (video && actorProfile) {
       await createAndEmitNotification(req.app.get('io'), {
         userId: video.userId,
         actorUserId: req.userId,
         type: 'comment',
         title: 'New comment',
-        body: `${actor.username || 'Someone'} commented on your reel`,
+        body: `${actorProfile.username || 'Someone'} commented on your reel`,
         entityType: 'video',
         entityId: video._id,
       });

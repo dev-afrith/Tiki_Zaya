@@ -9,6 +9,7 @@ const User = require('./models/User');
 const Message = require('./models/Message');
 const authMiddleware = require('./middleware/auth');
 const { canSendMessage } = require('./utils/chatPermissions');
+const { startBirthdayScheduler } = require('./utils/birthdayScheduler');
 
 dotenv.config();
 
@@ -73,6 +74,8 @@ app.use((req, res, next) => {
 const videoRoutes = require('./routes/videos');
 const commentRoutes = require('./routes/comments');
 const userRoutes = require('./routes/users');
+const authRoutes = require('./routes/auth');
+const gamificationRoutes = require('./routes/gamification');
 const messageRoutes = require('./routes/messages');
 const notificationRoutes = require('./routes/notifications');
 
@@ -84,9 +87,11 @@ app.get('/', (req, res) => {
   res.status(200).send('Tiki Zaya API is running 🚀');
 });
 
+app.use('/api/auth', authRoutes);
 app.use('/api/videos', videoRoutes);
 app.use('/api/comments', commentRoutes);
 app.use('/api/users', userRoutes);
+app.use('/api/gamification', gamificationRoutes);
 app.use('/api/messages', messageRoutes);
 app.use('/api/notifications', notificationRoutes);
 
@@ -120,7 +125,7 @@ io.use(async (socket, next) => {
       return next(new Error('Missing auth token'));
     }
 
-    const decoded = await authMiddleware.verifyToken(token);
+    const decoded = await authMiddleware.verifyAnyToken(token);
     socket.userId = decoded.uid;
     next();
   } catch (error) {
@@ -192,6 +197,7 @@ async function startServer() {
 
     server.listen(PORT, () => {
       console.log('Server is running on port ' + PORT);
+      startBirthdayScheduler(io);
     });
   } catch (err) {
     console.error('MongoDB connection failed:', err.message);

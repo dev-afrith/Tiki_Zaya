@@ -3,6 +3,7 @@ const mongoose = require('mongoose');
 const cloudinary = require('cloudinary').v2;
 const User = require('../models/User');
 const { createAndEmitNotification } = require('../utils/notifications');
+const { buildGamificationSummary, ensureGamificationState } = require('../utils/gamification');
 
 cloudinary.config({
   cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
@@ -90,7 +91,16 @@ exports.uploadVideo = async (req, res) => {
 
     await video.save();
 
-    const author = await User.findById(req.userId).select('username followers');
+    const author = await User.findById(req.userId).select('username followers gamification');
+    if (author) {
+      const gamification = ensureGamificationState(author);
+      gamification.uploadsTotal = Number(gamification.uploadsTotal || 0) + 1;
+      await author.save();
+      req.app.get('io')?.to(req.userId).emit('gamification_updated', {
+        user: author,
+        gamification: buildGamificationSummary(author),
+      });
+    }
     if (author && Array.isArray(author.followers) && author.followers.length > 0) {
       const io = req.app.get('io');
       for (const followerId of author.followers) {

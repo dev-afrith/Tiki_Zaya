@@ -87,8 +87,8 @@ exports.sendMessage = async (req, res) => {
     const message = await Message.create({
       fromUserId,
       toUserId,
-      text: messageType === 'text' ? text : (text || 'Shared a reel'),
-      messageType: messageType === 'reel' ? 'reel' : 'text',
+      text: (messageType === 'text' || messageType === 'voice' || messageType === 'call') ? text : (text || 'Shared a reel'),
+      messageType: ['reel', 'call', 'voice'].includes(messageType) ? messageType : 'text',
       sharedVideo: messageType === 'reel'
         ? {
             videoId: (sharedVideo.videoId || '').toString(),
@@ -156,11 +156,14 @@ exports.getInbox = async (req, res) => {
           latestMessageId: { $first: '$_id' },
           latestText: {
             $first: {
-              $cond: [
-                { $eq: ['$messageType', 'reel'] },
-                'Shared a reel',
-                '$text',
-              ],
+              $switch: {
+                branches: [
+                  { case: { $eq: ['$messageType', 'reel'] }, then: 'Shared a reel' },
+                  { case: { $eq: ['$messageType', 'voice'] }, then: '🎵 Voice message' },
+                  { case: { $eq: ['$messageType', 'call'] }, then: '📞 Call' }
+                ],
+                default: '$text'
+              }
             },
           },
           latestAt: { $first: '$createdAt' },
