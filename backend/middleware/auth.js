@@ -1,12 +1,43 @@
 const admin = require('firebase-admin');
+const fs = require('fs');
 const path = require('path');
 const jwt = require('jsonwebtoken');
 const User = require('../models/User');
 
+const getFirebaseServiceAccount = () => {
+  const json = process.env.FIREBASE_SERVICE_ACCOUNT_JSON;
+  if (json) {
+    const parsed = JSON.parse(json);
+    if (parsed.private_key) {
+      parsed.private_key = parsed.private_key.replace(/\\n/g, '\n');
+    }
+    return parsed;
+  }
+
+  const base64 = process.env.FIREBASE_SERVICE_ACCOUNT_BASE64;
+  if (base64) {
+    const parsed = JSON.parse(Buffer.from(base64, 'base64').toString('utf8'));
+    if (parsed.private_key) {
+      parsed.private_key = parsed.private_key.replace(/\\n/g, '\n');
+    }
+    return parsed;
+  }
+
+  const localPath = path.join(__dirname, '../config/firebase-service-account.json');
+  if (fs.existsSync(localPath)) {
+    return require(localPath);
+  }
+
+  return null;
+};
+
 // Initialize Firebase Admin
 try {
-  const serviceAccount = require(path.join(__dirname, '../config/firebase-service-account.json'));
+  const serviceAccount = getFirebaseServiceAccount();
   if (!admin.apps.length) {
+    if (!serviceAccount) {
+      throw new Error('Firebase service account is missing');
+    }
     admin.initializeApp({
       credential: admin.credential.cert(serviceAccount)
     });
@@ -17,6 +48,9 @@ try {
 }
 
 const verifyToken = async (idToken) => {
+  if (!admin.apps.length) {
+    throw new Error('Firebase Admin is not initialized');
+  }
   return await admin.auth().verifyIdToken(idToken);
 };
 
