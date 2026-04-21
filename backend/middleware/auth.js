@@ -2,7 +2,6 @@ const admin = require('firebase-admin');
 const path = require('path');
 const jwt = require('jsonwebtoken');
 const User = require('../models/User');
-const { applyDailyLoginBonus, awardFirstLoginBonus, ensureGamificationState } = require('../utils/gamification');
 
 // Initialize Firebase Admin
 try {
@@ -81,22 +80,7 @@ const authMiddleware = async (req, res, next) => {
         role: 'user',
         status: 'active',
         username: null, // Onboarding will fill this later
-        gamification: {
-          points: 0,
-          firstLoginAt: null,
-          welcomeBonusGrantedAt: null,
-          lastLoginAt: null,
-          streakDays: 0,
-          longestStreak: 0,
-          streakRewardsClaimed: [],
-          watchSecondsToday: 0,
-          watchRewardedMinutesToday: 0,
-          watchSecondsTotal: 0,
-          likesGivenTotal: 0,
-          commentsGivenTotal: 0,
-        },
       });
-      awardFirstLoginBonus(user);
       await user.save();
     } else {
       const nextEmail = decodedEmail || user.email || '';
@@ -128,12 +112,6 @@ const authMiddleware = async (req, res, next) => {
       return res.status(403).json({ message: 'Account is blocked' });
     }
 
-    ensureGamificationState(user);
-    const loginReward = applyDailyLoginBonus(user);
-    if (loginReward.awarded) {
-      await user.save();
-    }
-    
     // Attach UID and user object to the request
     req.userId = uid;
     req.user = user;

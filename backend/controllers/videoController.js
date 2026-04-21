@@ -3,7 +3,6 @@ const mongoose = require('mongoose');
 const cloudinary = require('cloudinary').v2;
 const User = require('../models/User');
 const { createAndEmitNotification } = require('../utils/notifications');
-const { awardLikeBonus } = require('../utils/gamification');
 
 cloudinary.config({
   cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
@@ -223,11 +222,6 @@ exports.toggleLike = async (req, res) => {
     const index = video.likes.indexOf(req.userId);
     if (index === -1) {
       video.likes.push(req.userId);
-      const actor = await User.findById(req.userId);
-      if (actor) {
-        awardLikeBonus(actor);
-        await actor.save();
-      }
     } else {
       video.likes.splice(index, 1);
     }
