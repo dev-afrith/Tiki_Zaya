@@ -1,9 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:mobile/services/api_service.dart';
-import 'package:mobile/services/auth_service.dart';
+import 'package:mobile/services/notification_service.dart';
 import 'package:mobile/screens/main_navigation.dart';
-import 'package:mobile/screens/profile_setup_screen.dart';
-import 'package:mobile/screens/verification_screen.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:mobile/widgets/auth_ui.dart';
 
@@ -16,8 +14,12 @@ class SignupScreen extends StatefulWidget {
 
 class _SignupScreenState extends State<SignupScreen> {
   final _nameController = TextEditingController();
+  final _usernameController = TextEditingController();
   final _emailController = TextEditingController();
+  final _phoneController = TextEditingController();
   final _passwordController = TextEditingController();
+  final _dobController = TextEditingController();
+  DateTime? _dateOfBirth;
   bool _obscurePassword = true;
   bool _isLoading = false;
   String? _errorMessage;
@@ -25,19 +27,61 @@ class _SignupScreenState extends State<SignupScreen> {
   @override
   void dispose() {
     _nameController.dispose();
+    _usernameController.dispose();
     _emailController.dispose();
+    _phoneController.dispose();
     _passwordController.dispose();
+    _dobController.dispose();
     super.dispose();
+  }
+
+  int _ageFrom(DateTime dob) {
+    final now = DateTime.now();
+    var age = now.year - dob.year;
+    if (now.month < dob.month || (now.month == dob.month && now.day < dob.day)) {
+      age--;
+    }
+    return age;
+  }
+
+  Future<void> _pickDob() async {
+    final now = DateTime.now();
+    final picked = await showDatePicker(
+      context: context,
+      initialDate: DateTime(now.year - 18, now.month, now.day),
+      firstDate: DateTime(now.year - 100),
+      lastDate: now,
+    );
+    if (picked != null) {
+      setState(() {
+        _dateOfBirth = picked;
+        _dobController.text = '${picked.day.toString().padLeft(2, '0')}/${picked.month.toString().padLeft(2, '0')}/${picked.year}';
+        if (_ageFrom(picked) < 13) {
+          _errorMessage = 'You must be at least 13 years old to use TikiZaya';
+        } else {
+          _errorMessage = null;
+        }
+      });
+    }
   }
 
   Future<void> _signup() async {
     final name = _nameController.text.trim();
+    final username = _usernameController.text.trim().toLowerCase();
     final email = _emailController.text.trim();
-    final password = _passwordController.text.trim();
+    final phone = _phoneController.text.trim();
+    final password = _passwordController.text;
 
     if (name.isEmpty) {
       setState(() {
         _errorMessage = 'Please enter your display name';
+      });
+      return;
+    }
+
+    if (!RegExp(r'^[a-z0-9_]{3,30}$').hasMatch(username)) {
+      setState(() {
+        _errorMessage = 'Username must be 3-30 characters with letters, numbers, or underscores';
       });
       return;
     }
@@ -49,9 +93,23 @@ class _SignupScreenState extends State<SignupScreen> {
       return;
     }
 
-    if (password.length < 6) {
+    if (!RegExp(r'^\d{10}$').hasMatch(phone)) {
       setState(() {
-        _errorMessage = 'Password must be at least 6 characters';
+        _errorMessage = 'Valid 10-digit phone number strictly required (digits only)';
+      });
+      return;
+    }
+
+    if (_dateOfBirth == null || _ageFrom(_dateOfBirth!) < 13) {
+      setState(() {
+        _errorMessage = 'You must be at least 13 years old to use TikiZaya';
+      });
+      return;
+    }
+
+    if (password.length < 8 || !RegExp(r'[A-Za-z]').hasMatch(password) || !RegExp(r'\d').hasMatch(password)) {
+      setState(() {
+        _errorMessage = 'Password must be 8+ characters with a letter and number';
       });
       return;
     }
@@ -61,25 +119,23 @@ class _SignupScreenState extends State<SignupScreen> {
       _errorMessage = null;
     });
 
-    final base = name
-      .toLowerCase()
-      .replaceAll(RegExp(r'[^a-z0-9]+'), '_')
-      .replaceAll(RegExp(r'^_+'), '')
-      .replaceAll(RegExp(r'_+$'), '');
-    final safeBase = base.isEmpty ? 'user' : base;
-    final generatedUsername = '${safeBase}_${DateTime.now().millisecondsSinceEpoch.toString().substring(8)}';
-
     try {
-      final result = await ApiService.register(generatedUsername, email, password);
+      final result = await ApiService.register(
+        username: username,
+        email: email,
+        phone: phone,
+        password: password,
+        dateOfBirth: _dateOfBirth!,
+        name: name,
+      );
 
-      if (result.containsKey('email')) {
-        // Success - OTP sent
+      if ((result['accessToken'] ?? result['token']) != null) {
+        await ApiService.saveSession(result);
+        await NotificationService.initialize();
         if (mounted) {
-          Navigator.push(
+          Navigator.pushReplacement(
             context,
-            MaterialPageRoute(
-              builder: (_) => VerificationScreen(email: result['email']),
-            ),
+            MaterialPageRoute(builder: (_) => const MainNavigation()),
           );
         }
       } else {
@@ -89,52 +145,6 @@ class _SignupScreenState extends State<SignupScreen> {
       setState(() { _errorMessage = 'Connection error. Is the server running?'; });
     } finally {
       setState(() { _isLoading = false; });
-    }
-  }
-
-  Future<void> _signupWithGoogle() async {
-    setState(() {
-      _isLoading = true;
-      _errorMessage = null;
-    });
-
-    try {
-      final credential = await AuthService.signInWithGoogle();
-      if (credential == null) return;
-
-      final token = await AuthService.getIdToken();
-      if (token != null) {
-        await ApiService.saveToken(token);
-      }
-
-      final user = AuthService.currentUser;
-      if (user == null || !mounted) return;
-
-      try {
-        final profile = await ApiService.getProfile(user.uid);
-        await ApiService.saveUser(profile);
-        if (!mounted) return;
-        Navigator.pushReplacement(
-          context,
-          MaterialPageRoute(builder: (_) => const MainNavigation()),
-        );
-      } catch (_) {
-        if (!mounted) return;
-        Navigator.pushReplacement(
-          context,
-          MaterialPageRoute(builder: (_) => const ProfileSetupScreen()),
-        );
-      }
-    } catch (_) {
-      setState(() {
-        _errorMessage = 'Google sign-up failed';
-      });
-    } finally {
-      if (mounted) {
-        setState(() {
-          _isLoading = false;
-        });
-      }
     }
   }
 
@@ -170,11 +180,37 @@ class _SignupScreenState extends State<SignupScreen> {
                               ),
                               const SizedBox(height: 14),
                               AuthTextField(
+                                controller: _usernameController,
+                                hint: 'Username',
+                                icon: Icons.alternate_email_rounded,
+                                autofillHints: const [AutofillHints.username],
+                              ),
+                              const SizedBox(height: 14),
+                              AuthTextField(
                                 controller: _emailController,
                                 hint: 'Email Address',
                                 icon: Icons.email_outlined,
                                 keyboardType: TextInputType.emailAddress,
                                 autofillHints: const [AutofillHints.email],
+                              ),
+                              const SizedBox(height: 14),
+                              AuthTextField(
+                                controller: _phoneController,
+                                hint: 'Phone Number',
+                                icon: Icons.phone_outlined,
+                                keyboardType: TextInputType.phone,
+                                autofillHints: const [AutofillHints.telephoneNumber],
+                              ),
+                              const SizedBox(height: 14),
+                              GestureDetector(
+                                onTap: _isLoading ? null : _pickDob,
+                                child: AbsorbPointer(
+                                  child: AuthTextField(
+                                    controller: _dobController,
+                                    hint: 'Date of Birth',
+                                    icon: Icons.cake_outlined,
+                                  ),
+                                ),
                               ),
                               const SizedBox(height: 14),
                               AuthTextField(
@@ -196,14 +232,6 @@ class _SignupScreenState extends State<SignupScreen> {
                                 ),
                               ),
                               const SizedBox(height: 22),
-                              const AuthDividerText(text: 'Or continue with'),
-                              const SizedBox(height: 14),
-                              AuthOutlineButton(
-                                onPressed: _isLoading ? null : _signupWithGoogle,
-                                icon: Icons.g_mobiledata_rounded,
-                                label: 'Continue with Google',
-                              ),
-                              const SizedBox(height: 16),
                               if (_errorMessage != null)
                                 Padding(
                                   padding: const EdgeInsets.only(bottom: 14),

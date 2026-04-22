@@ -121,6 +121,7 @@ const userSchema = new mongoose.Schema({
     streakRewardsClaimed: { type: [Number], default: [] },
     completedTaskIds: { type: [String], default: [] },
     claimedRewardIds: { type: [String], default: [] },
+    coins: { type: Number, default: 0 },
     lastWatchAt: { type: Date, default: null },
     watchSecondsToday: { type: Number, default: 0 },
     watchRewardedMinutesToday: { type: Number, default: 0 },

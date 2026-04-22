@@ -1,8 +1,55 @@
 const Notification = require('../models/Notification');
 const User = require('../models/User');
+const admin = require('firebase-admin');
+
+const sendFcmPush = async (userId, payload) => {
+  try {
+    if (!admin.apps.length) return; // Wait for admin initialization
+
+    const user = await User.findById(userId);
+    if (!user || (!user.fcmTokens) || user.fcmTokens.length === 0) return;
+
+    const validTokens = user.fcmTokens.map((t) => t.token);
+    if (validTokens.length === 0) return;
+
+    const message = {
+      tokens: validTokens,
+      notification: {
+        title: payload.title || 'Tiki Zaya',
+        body: payload.body || 'You have a new notification',
+      },
+      data: {
+        type: payload.type || '',
+        entityId: payload.entityId || '',
+        actorUserId: payload.actorUserId || '',
+        click_action: 'FLUTTER_NOTIFICATION_CLICK',
+      },
+    };
+
+    const response = await admin.messaging().sendEachForMulticast(message);
+    const failedTokens = [];
+    response.responses.forEach((resp, idx) => {
+      if (!resp.success) {
+        if (
+          resp.error.code === 'messaging/invalid-registration-token' ||
+          resp.error.code === 'messaging/registration-token-not-registered'
+        ) {
+          failedTokens.push(validTokens[idx]);
+        }
+      }
+    });
+
+    if (failedTokens.length > 0) {
+      user.fcmTokens = user.fcmTokens.filter((t) => !failedTokens.includes(t.token));
+      await user.save();
+    }
+  } catch (error) {
+    console.error('FCM Push Error:', error.message);
+  }
+};
 
 const buildPayload = async (notification) => {
-  const actor = notification.actorUserId
+  const actor = notification.actorUserId && notification.actorUserId !== 'system'
     ? await User.findById(notification.actorUserId).select('username profilePic')
     : null;
 
@@ -41,6 +88,9 @@ exports.createAndEmitNotification = async (io, data) => {
     io.to(notification.userId).emit('new_notification', payload);
   }
 
+  // Fire FCM Push
+  await sendFcmPush(data.userId, payload);
+
   return payload;
 };
 
@@ -61,6 +111,9 @@ exports.createSystemNotification = async (io, data) => {
   if (io) {
     io.to(notification.userId).emit('new_notification', payload);
   }
+
+  // Fire FCM Push
+  await sendFcmPush(data.userId, payload);
 
   return payload;
 };

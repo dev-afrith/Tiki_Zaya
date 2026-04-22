@@ -20,7 +20,23 @@ const {
 	deleteVideo,
 } = require('../controllers/videoController');
 
-const storage = multer.memoryStorage();
+const os = require('os');
+const path = require('path');
+const fs = require('fs');
+
+const storage = multer.diskStorage({
+  destination: function (req, file, cb) {
+    const tmpDir = path.join(os.tmpdir(), 'tikizaya-uploads');
+    if (!fs.existsSync(tmpDir)) {
+      fs.mkdirSync(tmpDir, { recursive: true });
+    }
+    cb(null, tmpDir);
+  },
+  filename: function (req, file, cb) {
+    const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
+    cb(null, file.fieldname + '-' + uniqueSuffix + path.extname(file.originalname || ''));
+  }
+});
 const upload = multer({ storage, limits: { fileSize: 100 * 1024 * 1024 } }); // 100MB limit
 
 router.post('/upload', auth, upload.single('video'), uploadVideo);

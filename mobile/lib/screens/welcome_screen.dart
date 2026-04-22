@@ -25,7 +25,7 @@ class _WelcomeScreenState extends State<WelcomeScreen>
     );
     _fade = CurvedAnimation(parent: _controller, curve: Curves.easeOutCubic);
     _slide = Tween<Offset>(
-      begin: const Offset(0, 0.08),
+      begin: const Offset(0, 0.06),
       end: Offset.zero,
     ).animate(CurvedAnimation(parent: _controller, curve: Curves.easeOutCubic));
     _controller.forward();
@@ -40,92 +40,139 @@ class _WelcomeScreenState extends State<WelcomeScreen>
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      body: AuthBackground(
-        child: AuthScaffoldBody(
-          child: LayoutBuilder(
-            builder: (context, constraints) {
-              final viewportHeight = MediaQuery.of(context).size.height;
-              final logoWidth = viewportHeight < 700 ? 220.0 : 250.0;
-              final topGap = viewportHeight < 700 ? 48.0 : 72.0;
-              final preButtonGap = viewportHeight < 700 ? 44.0 : 68.0;
-              final postButtonGap = viewportHeight < 700 ? 24.0 : 34.0;
+      body: Container(
+        width: double.infinity,
+        height: double.infinity,
+        decoration: const BoxDecoration(
+          gradient: LinearGradient(
+            begin: Alignment.topCenter,
+            end: Alignment.bottomCenter,
+            colors: [
+              Color(0xFF0A0A14),
+              Color(0xFF0E1225),
+              Color(0xFF0A0A14),
+            ],
+          ),
+        ),
+        child: SafeArea(
+          child: FadeTransition(
+            opacity: _fade,
+            child: SlideTransition(
+              position: _slide,
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 28),
+                child: Column(
+                  children: [
+                    // Top flexible space
+                    const Expanded(flex: 2, child: SizedBox()),
 
-              return FadeTransition(
-                opacity: _fade,
-                child: SlideTransition(
-                  position: _slide,
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    children: [
-                      SizedBox(height: topGap),
-                      Center(
-                        child: Image.asset(
-                          'assets/branding/logo.png',
-                          width: logoWidth,
-                          fit: BoxFit.contain,
-                          filterQuality: FilterQuality.high,
-                        ),
-                      ),
-                      const SizedBox(height: 22),
-                      Align(
-                        alignment: Alignment.center,
-                        child: Container(
-                          width: 128,
-                          height: 104,
-                          padding: const EdgeInsets.all(12),
-                          decoration: BoxDecoration(
-                            borderRadius: BorderRadius.circular(24),
-                            color: Colors.white.withValues(alpha: 0.08),
-                            border: Border.all(color: Colors.white.withValues(alpha: 0.16)),
-                          ),
-                          child: Image.asset(
-                            'assets/branding/logo.png',
-                            fit: BoxFit.contain,
-                            filterQuality: FilterQuality.high,
-                          ),
-                        ),
-                      ),
-                      const SizedBox(height: 18),
-                      Text(
-                        'Share your moments with the world',
+                    // Title: "TikiZaya" — gradient pink to purple script
+                    ShaderMask(
+                      shaderCallback: (bounds) => const LinearGradient(
+                        colors: [Color(0xFFFF3B8E), Color(0xFF8B5CF6)],
+                      ).createShader(bounds),
+                      child: Text(
+                        'TikiZaya',
                         textAlign: TextAlign.center,
-                        style: GoogleFonts.poppins(
-                          color: Colors.white.withValues(alpha: 0.78),
-                          fontSize: 15,
-                          letterSpacing: 0.3,
-                          fontWeight: FontWeight.w500,
+                        style: GoogleFonts.dancingScript(
+                          fontSize: 58,
+                          fontWeight: FontWeight.w700,
+                          color: Colors.white,
+                          letterSpacing: -0.5,
                         ),
                       ),
-                      SizedBox(height: preButtonGap),
-                      AuthPrimaryButton(
-                        label: 'Get Started',
-                        onPressed: () => Navigator.push(
-                          context,
-                          PageRouteBuilder(
-                            pageBuilder: (_, __, ___) => const LoginScreen(),
-                            transitionsBuilder: (_, animation, __, child) => FadeTransition(
-                              opacity: animation,
-                              child: child,
+                    ),
+
+                    const Expanded(flex: 1, child: SizedBox()),
+
+                    // Logo — transparent, no box, no container
+                    Image.asset(
+                      'assets/branding/logo.png',
+                      width: 220,
+                      fit: BoxFit.contain,
+                      filterQuality: FilterQuality.high,
+                    ),
+
+                    const SizedBox(height: 24),
+
+                    // Tagline
+                    Text(
+                      'Share your moments with the world',
+                      textAlign: TextAlign.center,
+                      style: GoogleFonts.poppins(
+                        color: Colors.white.withValues(alpha: 0.75),
+                        fontSize: 15,
+                        fontWeight: FontWeight.w400,
+                        letterSpacing: 0.3,
+                      ),
+                    ),
+
+                    const Expanded(flex: 2, child: SizedBox()),
+
+                    // Get Started button
+                    SizedBox(
+                      width: double.infinity,
+                      height: 58,
+                      child: DecoratedBox(
+                        decoration: BoxDecoration(
+                          borderRadius: BorderRadius.circular(30),
+                          gradient: const LinearGradient(
+                            colors: [Color(0xFFFF3B8E), Color(0xFFB86EF5)],
+                          ),
+                          boxShadow: [
+                            BoxShadow(
+                              color: const Color(0xFFFF3B8E).withValues(alpha: 0.25),
+                              blurRadius: 20,
+                              offset: const Offset(0, 8),
+                            ),
+                          ],
+                        ),
+                        child: ElevatedButton(
+                          onPressed: () => Navigator.push(
+                            context,
+                            PageRouteBuilder(
+                              pageBuilder: (_, __, ___) => const LoginScreen(),
+                              transitionsBuilder: (_, animation, __, child) =>
+                                  FadeTransition(opacity: animation, child: child),
+                            ),
+                          ),
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: Colors.transparent,
+                            shadowColor: Colors.transparent,
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(30),
+                            ),
+                          ),
+                          child: Text(
+                            'Get Started',
+                            style: GoogleFonts.poppins(
+                              color: Colors.white,
+                              fontSize: 17,
+                              fontWeight: FontWeight.w700,
+                              letterSpacing: 0.5,
                             ),
                           ),
                         ),
                       ),
-                      SizedBox(height: postButtonGap),
-                      Text(
-                        'By continuing, you agree to our Terms and Privacy Policy.',
-                        textAlign: TextAlign.center,
-                        style: GoogleFonts.poppins(
-                          color: Colors.white.withValues(alpha: 0.42),
-                          fontSize: 11,
-                        ),
+                    ),
+
+                    const SizedBox(height: 28),
+
+                    // Footer
+                    Text(
+                      'By continuing, you agree to our Terms and Privacy Policy.',
+                      textAlign: TextAlign.center,
+                      style: GoogleFonts.poppins(
+                        color: Colors.white.withValues(alpha: 0.38),
+                        fontSize: 11,
                       ),
-                      const SizedBox(height: 8),
-                    ],
-                  ),
+                    ),
+
+                    const Expanded(flex: 1, child: SizedBox()),
+                  ],
                 ),
-              );
-            },
+              ),
+            ),
           ),
         ),
       ),

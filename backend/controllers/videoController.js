@@ -23,21 +23,17 @@ exports.uploadVideo = async (req, res) => {
     console.log(`[DEBUG] File size: ${(req.file.size / 1024 / 1024).toFixed(2)} MB`);
     console.log('[DEBUG] Uploading to Cloudinary...');
 
-    // Upload to Cloudinary
-    const result = await new Promise((resolve, reject) => {
-      const stream = cloudinary.uploader.upload_stream(
-        { resource_type: 'video', folder: 'tikizaya' },
-        (error, result) => {
-          if (error) {
-            console.error('[DEBUG] Cloudinary Error:', error);
-            reject(error);
-          } else {
-            console.log('[DEBUG] Cloudinary Success!');
-            resolve(result);
-          }
-        }
-      );
-      stream.end(req.file.buffer);
+    // Upload to Cloudinary from local disk
+    const result = await cloudinary.uploader.upload(req.file.path, {
+      resource_type: 'video',
+      folder: 'tikizaya'
+    });
+    console.log('[DEBUG] Cloudinary Success!');
+
+    // Clean up temporary file
+    const fs = require('fs');
+    fs.unlink(req.file.path, (err) => {
+      if (err) console.error('[DEBUG] Failed to delete temp file:', err);
     });
 
     console.log('[DEBUG] Saving video metadata to MongoDB...');
@@ -120,6 +116,12 @@ exports.uploadVideo = async (req, res) => {
     res.status(201).json({ message: 'Video uploaded successfully', video });
   } catch (error) {
     console.error('[DEBUG] Global Upload Error:', error.message);
+    if (req.file && req.file.path) {
+      const fs = require('fs');
+      fs.unlink(req.file.path, (err) => {
+        if (err) console.error('[DEBUG] Failed to delete temp file in error block:', err);
+      });
+    }
     res.status(500).json({ error: error.message });
   }
 };

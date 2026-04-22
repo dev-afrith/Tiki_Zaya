@@ -1,12 +1,16 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:video_player/video_player.dart';
 import 'package:mobile/services/api_service.dart';
 import 'package:mobile/screens/comments_screen.dart';
 import 'package:mobile/screens/profile_screen.dart';
 import 'package:mobile/screens/fullscreen_feed_screen.dart';
 import 'package:mobile/screens/notifications_screen.dart';
-import 'package:mobile/widgets/heart_animation.dart';
+import 'package:mobile/screens/rewards_screen.dart';
+import 'package:mobile/widgets/gamification_widgets.dart';
+import 'package:mobile/widgets/like_animation_widget.dart';
+import 'package:mobile/widgets/post_widget.dart';
 import 'package:share_plus/share_plus.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'dart:async';
@@ -22,8 +26,9 @@ class HomeScreen extends StatefulWidget {
   State<HomeScreen> createState() => _HomeScreenState();
 }
 
-class _HomeScreenState extends State<HomeScreen> {
+class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateMixin {
   final PageController _pageController = PageController();
+  late final AnimationController _titleGlowController;
   final List<dynamic> _videos = [];
   Map<String, dynamic>? _currentUser;
   bool _isLoading = true;
@@ -33,15 +38,22 @@ class _HomeScreenState extends State<HomeScreen> {
   bool _hasMore = true;
   int _focusedIndex = 0;
   int _unreadNotifications = 0;
+  int _tzPoints = 0;
+  int _streakDays = 0;
 
   @override
   void initState() {
     super.initState();
+    _titleGlowController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 2200),
+    )..repeat(reverse: true);
     _loadData();
   }
 
   @override
   void dispose() {
+    _titleGlowController.dispose();
     _pageController.dispose();
     super.dispose();
   }
@@ -55,13 +67,10 @@ class _HomeScreenState extends State<HomeScreen> {
     }
 
     try {
-      final user = await ApiService.getUser();
+      final summary = await ApiService.getGamificationSummary();
+      _applyGamificationSummary(summary);
 
-      if (mounted) {
-        setState(() {
-          _currentUser = user;
-        });
-      }
+      await _maybeShowWelcome(summary);
 
       await _loadNotifications();
       await _loadFeed(reset: true);
@@ -77,6 +86,48 @@ class _HomeScreenState extends State<HomeScreen> {
         });
       }
     }
+  }
+
+  void _applyGamificationSummary(Map<String, dynamic> summary) {
+    final user = summary['user'] as Map<String, dynamic>?;
+    final gamification = summary['gamification'] as Map<String, dynamic>? ?? <String, dynamic>{};
+
+    if (!mounted) return;
+    setState(() {
+      _currentUser = user;
+      _tzPoints = _readInt(gamification['points'], _tzPoints);
+      _streakDays = _readInt(gamification['streakDays'], _streakDays);
+    });
+  }
+
+  Future<void> _refreshGamificationOnly() async {
+    try {
+      final summary = await ApiService.getGamificationSummary();
+      _applyGamificationSummary(summary);
+    } catch (_) {}
+  }
+
+  Future<void> _maybeShowWelcome(Map<String, dynamic> summary) async {
+    final user = summary['user'];
+    final gamification = summary['gamification'];
+    if (user is! Map || gamification is! Map) return;
+
+    final welcomeAt = gamification['welcomeBonusGrantedAt'];
+    final userId = (user['_id'] ?? user['id'] ?? '').toString();
+    if (userId.isEmpty || welcomeAt == null) return;
+
+    final prefs = await SharedPreferences.getInstance();
+    final key = 'tz_welcome_seen_$userId';
+    if (prefs.getBool(key) == true) return;
+    await prefs.setBool(key, true);
+
+    if (!mounted) return;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Welcome to Tikizaya. 100 TZ points added.')),
+      );
+    });
   }
 
   Future<void> _loadNotifications() async {
@@ -146,6 +197,25 @@ class _HomeScreenState extends State<HomeScreen> {
       MaterialPageRoute(builder: (_) => const NotificationsScreen()),
     );
     await _loadNotifications();
+  }
+
+  void _openRewards() {
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => const RewardsScreen(),
+      ),
+    );
+  }
+
+  int _readInt(dynamic value, int fallback) {
+    if (value is int) return value;
+    if (value is num) return value.toInt();
+    if (value is String) {
+      final parsed = int.tryParse(value);
+      if (parsed != null) return parsed;
+    }
+    return fallback;
   }
 
   void _onPageChanged(int index) {
@@ -237,6 +307,7 @@ class _HomeScreenState extends State<HomeScreen> {
                   currentUser: _currentUser,
                   isFullscreen: false,
                   onRequestFullscreen: () => _openFullscreen(index),
+                  onGamificationChanged: _refreshGamificationOnly,
                 );
               },
             ),
@@ -260,32 +331,80 @@ class _HomeScreenState extends State<HomeScreen> {
     return Scaffold(
       backgroundColor: Colors.black,
       appBar: AppBar(
+        toolbarHeight: 64,
         backgroundColor: Colors.black,
         elevation: 0,
-        title: ShaderMask(
-          shaderCallback: (bounds) => const LinearGradient(
-            colors: [Color(0xFFFF3B8E), Color(0xFF8B5CF6), Color(0xFF3B82F6)],
-          ).createShader(bounds),
-          child: Text(
-            'TikiZaya',
-            style: GoogleFonts.yellowtail(
-              color: Colors.white,
-              fontSize: 34,
-              fontWeight: FontWeight.w700,
+        automaticallyImplyLeading: false,
+        titleSpacing: 12,
+        title: Row(
+          children: [
+            TZPointsWidget(
+              points: _tzPoints,
+              onTap: _openRewards,
+              compact: true,
             ),
-          ),
-        ),
-        actions: [
-          Stack(
-            children: [
-              IconButton(
-                onPressed: _openNotifications,
-                icon: const Icon(Icons.notifications_none_rounded, color: Colors.white),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Center(
+                child: AnimatedBuilder(
+                  animation: _titleGlowController,
+                  builder: (context, child) {
+                    final t = _titleGlowController.value;
+                    final glow = 7 + (t * 7);
+                    final scale = 1 + (t * 0.02);
+
+                    return Transform.scale(
+                      scale: scale,
+                      child: ShaderMask(
+                        shaderCallback: (bounds) => LinearGradient(
+                          begin: Alignment(-1 + (t * 0.5), -0.3),
+                          end: const Alignment(1, 0.5),
+                          colors: const [
+                            Color(0xFFFF42B3),
+                            Color(0xFFB067FF),
+                            Color(0xFF6AD9FF),
+                          ],
+                        ).createShader(bounds),
+                        child: Text(
+                          'TikiZaya',
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: GoogleFonts.dancingScript(
+                            color: Colors.white,
+                            fontSize: 34,
+                            letterSpacing: 0.8,
+                            fontWeight: FontWeight.w700,
+                            height: 1,
+                            shadows: [
+                              Shadow(
+                                color: const Color(0xFFFF42B3).withValues(alpha: 0.35),
+                                blurRadius: glow,
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    );
+                  },
+                ),
               ),
-              _buildNotificationBadge(_unreadNotifications),
-            ],
-          ),
-        ],
+            ),
+            const SizedBox(width: 10),
+            SizedBox(
+              width: 34,
+              child: Stack(
+                children: [
+                  IconButton(
+                    padding: EdgeInsets.zero,
+                    onPressed: _openNotifications,
+                    icon: const Icon(Icons.notifications_none_rounded, color: Colors.white),
+                  ),
+                  _buildNotificationBadge(_unreadNotifications),
+                ],
+              ),
+            ),
+          ],
+        ),
       ),
       body: Container(
         decoration: const BoxDecoration(
@@ -311,6 +430,8 @@ class FeedPost extends StatefulWidget {
   final Map<String, dynamic>? currentUser;
   final bool isFullscreen;
   final VoidCallback? onRequestFullscreen;
+  final VoidCallback? onGamificationChanged;
+  final String? messageIdForStreak;
 
   const FeedPost({
     super.key,
@@ -319,6 +440,8 @@ class FeedPost extends StatefulWidget {
     this.currentUser,
     this.isFullscreen = false,
     this.onRequestFullscreen,
+    this.onGamificationChanged,
+    this.messageIdForStreak,
   });
 
   @override
@@ -342,7 +465,17 @@ class _FeedPostState extends State<FeedPost> {
   int _viewsCount = 0;
   int _commentsCountLive = 0;
   Timer? _statsTimer;
-  final List<Offset> _tapPositions = [];
+  Timer? _watchTimer;
+  final List<ActiveLikeAnimation> _activeLikeAnimations = [];
+  int _animationIdSeed = 0;
+  bool _isLikeRequestInFlight = false;
+  DateTime? _lastDoubleTapAt;
+  bool _streakAcknowledged = false;
+  double _lastTrackedWatchPosition = 0;
+
+  // Toggle this from app settings when needed.
+  bool _enableDoubleTapAnimations = true;
+  LikeAnimationStyle _animationStyle = LikeAnimationStyle.puzzle;
 
   @override
   void initState() {
@@ -359,6 +492,7 @@ class _FeedPostState extends State<FeedPost> {
     _initVideo();
     _checkInitialStates();
     _startStatsPollingIfNeeded();
+    _startWatchTrackingIfNeeded();
 
     // Increment view after 2s
     Future.delayed(const Duration(seconds: 2), () {
@@ -391,9 +525,11 @@ class _FeedPostState extends State<FeedPost> {
       if (widget.shouldPlay && !oldWidget.shouldPlay) {
         _controller.play();
         _startStatsPollingIfNeeded();
+        _startWatchTrackingIfNeeded();
       } else if (!widget.shouldPlay && oldWidget.shouldPlay) {
         _controller.pause();
         _stopStatsPolling();
+        _stopWatchTracking();
       }
     }
   }
@@ -402,7 +538,7 @@ class _FeedPostState extends State<FeedPost> {
     _stopStatsPolling();
     if (!widget.shouldPlay) return;
     _syncVideoStats();
-    _statsTimer = Timer.periodic(const Duration(seconds: 3), (_) {
+    _statsTimer = Timer.periodic(const Duration(seconds: 8), (_) {
       if (!mounted || !widget.shouldPlay) return;
       _syncVideoStats();
     });
@@ -411,6 +547,30 @@ class _FeedPostState extends State<FeedPost> {
   void _stopStatsPolling() {
     _statsTimer?.cancel();
     _statsTimer = null;
+  }
+
+  void _startWatchTrackingIfNeeded() {
+    _stopWatchTracking();
+    if (!widget.shouldPlay) return;
+
+    final videoId = (widget.video['_id'] ?? '').toString();
+    if (videoId.isEmpty) return;
+
+    _watchTimer = Timer.periodic(const Duration(seconds: 10), (_) async {
+      if (!mounted || !widget.shouldPlay || !_isInitialized || !_controller.value.isPlaying) return;
+
+      try {
+        await ApiService.recordWatchProgress(videoId: videoId, seconds: 10);
+        widget.onGamificationChanged?.call();
+      } catch (_) {
+        // Keep playback smooth when watch tracking fails.
+      }
+    });
+  }
+
+  void _stopWatchTracking() {
+    _watchTimer?.cancel();
+    _watchTimer = null;
   }
 
   Future<void> _syncVideoStats() async {
@@ -447,15 +607,46 @@ class _FeedPostState extends State<FeedPost> {
       _controller.setLooping(true);
       if (widget.shouldPlay) _controller.play();
       if (mounted) setState(() { _isInitialized = true; });
+
+      // Listen for streak validation if messageIdForStreak is present
+      if (widget.messageIdForStreak != null) {
+        _controller.addListener(_videoStreakListener);
+      }
     } catch (e) {
       debugPrint('Video error: $e');
     }
   }
 
+  void _videoStreakListener() {
+    if (!mounted || _streakAcknowledged || widget.messageIdForStreak == null || !_isInitialized) return;
+    
+    final position = _controller.value.position.inMilliseconds / 1000.0;
+    final duration = _controller.value.duration.inMilliseconds / 1000.0;
+    
+    if (duration <= 0) return;
+
+    // Condition: 3 seconds OR 30% of video
+    final threshold = 3.0; // seconds
+    final percentageThreshold = duration * 0.3;
+    final target = threshold < percentageThreshold ? threshold : percentageThreshold;
+
+    if (position >= target) {
+      _streakAcknowledged = true;
+      _controller.removeListener(_videoStreakListener);
+      debugPrint('🔥 Streak target met: reporting watch for message ${widget.messageIdForStreak}');
+      ApiService.acknowledgeReelWatch(widget.messageIdForStreak!, position);
+    }
+  }
+
   Future<void> _toggleLike() async {
+    if (_isLikeRequestInFlight) return;
+
+    _isLikeRequestInFlight = true;
     try {
       final videoId = (widget.video['_id'] ?? '').toString();
       if (videoId.isEmpty) return;
+
+      // Backend placeholder call for like persistence.
       final result = await ApiService.toggleLike(videoId);
       if (mounted) {
         final likedNow = result['liked'] ?? false;
@@ -463,22 +654,12 @@ class _FeedPostState extends State<FeedPost> {
           _isLiked = likedNow;
           _likesCount = result['likes'] ?? _likesCount;
         });
-        if (likedNow) {
-          final size = MediaQuery.of(context).size;
-          setState(() {
-            _tapPositions.add(Offset(size.width / 2, size.height / 2.4));
-          });
-          Timer(const Duration(milliseconds: 650), () {
-            if (!mounted) return;
-            setState(() {
-              if (_tapPositions.isNotEmpty) {
-                _tapPositions.removeAt(0);
-              }
-            });
-          });
-        }
+        widget.onGamificationChanged?.call();
       }
     } catch (e) { debugPrint('Like error: $e'); }
+    finally {
+      _isLikeRequestInFlight = false;
+    }
   }
 
   Future<void> _toggleFavorite() async {
@@ -708,6 +889,32 @@ class _FeedPostState extends State<FeedPost> {
               onTap: () {
                 Navigator.pop(context);
                 _copyVideoLink();
+              },
+            ),
+            SwitchListTile(
+              value: _enableDoubleTapAnimations,
+              activeColor: const Color(0xFFFF006E),
+              title: const Text('Double-tap animation', style: TextStyle(color: Colors.white)),
+              subtitle: const Text('Enable or disable tap effects', style: TextStyle(color: Colors.white70, fontSize: 12)),
+              onChanged: (value) {
+                setState(() {
+                  _enableDoubleTapAnimations = value;
+                });
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.auto_awesome_rounded, color: Colors.white),
+              title: const Text('Animation style', style: TextStyle(color: Colors.white)),
+              subtitle: Text(
+                _animationStyle == LikeAnimationStyle.puzzle ? 'Puzzle' : 'Spark',
+                style: const TextStyle(color: Colors.white70, fontSize: 12),
+              ),
+              onTap: () {
+                setState(() {
+                  _animationStyle = _animationStyle == LikeAnimationStyle.puzzle
+                      ? LikeAnimationStyle.spark
+                      : LikeAnimationStyle.puzzle;
+                });
               },
             ),
             ListTile(
@@ -1052,18 +1259,38 @@ class _FeedPostState extends State<FeedPost> {
   }
 
   void _handleDoubleTap(TapDownDetails details) {
+    final now = DateTime.now();
+    if (_lastDoubleTapAt != null && now.difference(_lastDoubleTapAt!) < const Duration(milliseconds: 160)) {
+      return;
+    }
+    _lastDoubleTapAt = now;
+
+    HapticFeedback.lightImpact();
+
+    final id = ++_animationIdSeed;
     setState(() {
-      _tapPositions.add(details.localPosition);
-      if (!_isLiked) _toggleLike();
+      _activeLikeAnimations.add(
+        ActiveLikeAnimation(id: id, position: details.localPosition),
+      );
     });
-    Timer(const Duration(milliseconds: 800), () {
-      if (mounted) setState(() { _tapPositions.clear(); });
+
+    Future.delayed(const Duration(milliseconds: 860), () {
+      if (!mounted) return;
+      setState(() {
+        _activeLikeAnimations.removeWhere((entry) => entry.id == id);
+      });
     });
+
+    // Prevent duplicate like requests while still allowing visual feedback.
+    if (!_isLiked && !_isLikeRequestInFlight) {
+      _toggleLike();
+    }
   }
 
   @override
   void dispose() {
     _stopStatsPolling();
+    _stopWatchTracking();
     _controller.dispose();
     super.dispose();
   }
@@ -1143,93 +1370,49 @@ class _FeedPostState extends State<FeedPost> {
 
     return Column(
       children: [
-        // ── POST HEADER: avatar + username + timestamp ──
-        if (!widget.isFullscreen)
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-            child: Row(
-              children: [
-                GestureDetector(
-                  onTap: () {
-                    if (authorId.isNotEmpty) {
-                      Navigator.push(context, MaterialPageRoute(builder: (_) => ProfileScreen(userId: authorId)));
-                    }
-                  },
-                  child: Container(
-                    width: 38,
-                    height: 38,
-                    decoration: const BoxDecoration(shape: BoxShape.circle),
-                    child: ClipOval(
-                      child: profilePic.isNotEmpty
-                          ? Image.network(
-                              profilePic,
-                              fit: BoxFit.cover,
-                              errorBuilder: (_, __, ___) => Container(
-                                color: const Color(0xFFFF006E),
-                                child: Center(child: Text(username[0].toUpperCase(), style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 14))),
-                              ),
-                            )
-                          : Container(
-                              color: const Color(0xFFFF006E),
-                              child: Center(child: Text(username[0].toUpperCase(), style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 14))),
-                            ),
-                    ),
-                  ),
-                ),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(username, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 14)),
-                      if (timeAgo.isNotEmpty)
-                        Text(timeAgo, style: const TextStyle(color: Colors.white38, fontSize: 11)),
-                    ],
-                  ),
-                ),
-                const SizedBox.shrink(),
-              ],
-            ),
-          ),
+        // Username header removed — shown only at bottom overlay like TikTok/Instagram
 
         // ── VIDEO CONTENT + overlays ──
         Expanded(
           child: Stack(
             fit: StackFit.expand,
             children: [
-              // Video player (with Filter)
-              GestureDetector(
+              // Video player with Instagram-style double tap overlay.
+              PostWidget(
+                activeAnimations: _activeLikeAnimations,
+                enableAnimations: _enableDoubleTapAnimations,
                 onDoubleTapDown: _handleDoubleTap,
-                onTap: () {
-                  if (widget.isFullscreen) {
-                    if (_controller.value.isPlaying) {
-                      _controller.pause();
-                    } else {
-                      _controller.play();
+                style: _animationStyle,
+                child: GestureDetector(
+                  onTap: () {
+                    if (_isInitialized) {
+                      if (_controller.value.isPlaying) {
+                        _controller.pause();
+                      } else {
+                        _controller.play();
+                      }
+                      setState(() {});
                     }
-                    setState(() {});
-                  } else {
-                    widget.onRequestFullscreen?.call();
-                  }
-                },
-                child: _isInitialized
-                    ? Container(
-                        color: Colors.black,
-                        child: Center(
-                          child: AspectRatio(
-                            aspectRatio: _controller.value.aspectRatio,
-                            child: _buildFilteredVideo(filterName),
-                          ),
-                        ),
-                      )
-                    : _hasVideoError
-                        ? const Center(
-                            child: Text(
-                              'Video unavailable',
-                              style: TextStyle(color: Colors.white54),
+                  },
+                  child: _isInitialized
+                      ? Container(
+                          color: Colors.black,
+                          child: Center(
+                            child: AspectRatio(
+                              aspectRatio: _controller.value.aspectRatio,
+                              child: _buildFilteredVideo(filterName),
                             ),
-                          )
-                        : const Center(child: CircularProgressIndicator(color: Color(0xFFFF006E))),
+                          ),
+                        )
+                      : _hasVideoError
+                          ? const Center(
+                              child: Text(
+                                'Video unavailable',
+                                style: TextStyle(color: Colors.white54),
+                              ),
+                            )
+                          : const Center(child: CircularProgressIndicator(color: Color(0xFFFF006E))),
+                ),
               ),
 
               // Text Overlays
@@ -1256,16 +1439,6 @@ class _FeedPostState extends State<FeedPost> {
                   ),
                 );
               }),
-
-              // Floating hearts from double-tap
-              ..._tapPositions.map((pos) => Positioned(
-                left: pos.dx - 40,
-                top: pos.dy - 40,
-                child: HeartAnimation(
-                  isAnimating: true,
-                  child: const Icon(Icons.favorite, color: Color(0xFFFF006E), size: 80),
-                ),
-              )),
 
               // ── RIGHT SIDE: Engagement buttons ──
               Positioned(
@@ -1296,7 +1469,10 @@ class _FeedPostState extends State<FeedPost> {
                           backgroundColor: Colors.transparent,
                           builder: (context) => SizedBox(
                             height: MediaQuery.of(context).size.height * 0.75,
-                            child: CommentsSheet(videoId: (widget.video['_id'] ?? '').toString()),
+                            child: CommentsSheet(
+                              videoId: (widget.video['_id'] ?? '').toString(),
+                              onGamificationChanged: widget.onGamificationChanged,
+                            ),
                           ),
                         );
                       },
@@ -1343,7 +1519,7 @@ class _FeedPostState extends State<FeedPost> {
 
               // ── BOTTOM LEFT: Caption + music ──
               Positioned(
-                left: 12,
+                left: 20, // Moved slightly right
                 bottom: 26,
                 right: bottomRightReserve,
                 child: Column(

@@ -8,8 +8,8 @@ const { Server } = require('socket.io');
 const User = require('./models/User');
 const Message = require('./models/Message');
 const authMiddleware = require('./middleware/auth');
-const { canSendMessage } = require('./utils/chatPermissions');
 const { startBirthdayScheduler } = require('./utils/birthdayScheduler');
+const { initStreakScheduler } = require('./utils/streakScheduler');
 
 dotenv.config();
 
@@ -78,6 +78,8 @@ const authRoutes = require('./routes/auth');
 const gamificationRoutes = require('./routes/gamification');
 const messageRoutes = require('./routes/messages');
 const notificationRoutes = require('./routes/notifications');
+const streakRoutes = require('./routes/streaks');
+const callRoutes = require('./routes/calls');
 
 app.get('/api/health', (req, res) => {
   res.status(200).json({ status: 'ok', message: 'Tiki Zaya API is running!' });
@@ -94,6 +96,8 @@ app.use('/api/users', userRoutes);
 app.use('/api/gamification', gamificationRoutes);
 app.use('/api/messages', messageRoutes);
 app.use('/api/notifications', notificationRoutes);
+app.use('/api/streaks', streakRoutes);
+app.use('/api/calls', callRoutes);
 
 app.use((req, res) => {
   res.status(404).json({ message: 'Route not found' });
@@ -142,42 +146,47 @@ io.on('connection', (socket) => {
     socket.join(getRoomId(socket.userId, withUserId));
   });
 
-  socket.on('send_message', async ({ toUserId, text }, callback) => {
+  // Mark messages as seen — called when user opens a conversation
+  socket.on('mark_seen', async ({ fromUserId }) => {
     try {
-      if (!toUserId || !text || typeof text !== 'string') {
-        callback?.({ ok: false, error: 'Invalid message payload' });
-        return;
+      if (!fromUserId || typeof fromUserId !== 'string') return;
+
+      const result = await Message.updateMany(
+        {
+          fromUserId: fromUserId,
+          toUserId: socket.userId,
+          readAt: null,
+        },
+        { $set: { readAt: new Date(), status: 'seen' } }
+      );
+
+      if (result.modifiedCount > 0) {
+        // Notify the sender that their messages were seen
+        const roomId = getRoomId(socket.userId, fromUserId);
+        io.to(roomId).emit('messages_seen', {
+          seenBy: socket.userId,
+          seenAt: new Date().toISOString(),
+        });
       }
-
-      const sender = await User.findById(socket.userId);
-      const recipient = await User.findById(toUserId);
-      if (!sender || !recipient) {
-        callback?.({ ok: false, error: 'User not found' });
-        return;
-      }
-
-      const allowed = canSendMessage({ sender, recipient });
-      if (!allowed) {
-        callback?.({ ok: false, error: 'Messaging not allowed by privacy settings' });
-        return;
-      }
-
-      const message = await Message.create({
-        fromUserId: socket.userId,
-        toUserId,
-        text: text.trim(),
-      });
-
-      const populated = await Message.findById(message._id)
-        .populate('fromUserId', 'username profilePic isPrivate')
-        .populate('toUserId', 'username profilePic isPrivate');
-
-      const roomId = getRoomId(socket.userId, toUserId);
-      io.to(roomId).emit('new_message', populated);
-      callback?.({ ok: true, message: populated });
     } catch (error) {
-      callback?.({ ok: false, error: 'Failed to send message' });
+      console.error('mark_seen error:', error.message);
     }
+  });
+
+  // Typing indicator
+  socket.on('typing', ({ toUserId, isTyping }) => {
+    if (!toUserId || typeof toUserId !== 'string') return;
+    const roomId = getRoomId(socket.userId, toUserId);
+    socket.to(roomId).emit('user_typing', {
+      userId: socket.userId,
+      isTyping: !!isTyping,
+    });
+  });
+
+  // Check if a user is online
+  socket.on('check_online', ({ userId }, callback) => {
+    if (!userId) return callback?.({ online: false });
+    callback?.({ online: onlineUsers.has(userId) });
   });
 
   socket.on('disconnect', () => {

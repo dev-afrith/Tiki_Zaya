@@ -136,6 +136,10 @@ exports.login = async (req, res) => {
     }
 
     const session = await issueSession(user, req);
+    
+    // Update login streak
+    await require('../services/streakService').updateLoginStreak(user._id);
+
     return res.status(200).json({
       token: session.accessToken,
       accessToken: session.accessToken,

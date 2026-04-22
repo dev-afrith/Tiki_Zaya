@@ -5,12 +5,14 @@ class FullscreenFeedScreen extends StatefulWidget {
   final List<dynamic> videos;
   final int initialIndex;
   final Map<String, dynamic>? currentUser;
+  final String? messageIdForStreak;
 
   const FullscreenFeedScreen({
     super.key,
     required this.videos,
     required this.initialIndex,
     this.currentUser,
+    this.messageIdForStreak,
   });
 
   @override
@@ -57,6 +59,7 @@ class _FullscreenFeedScreenState extends State<FullscreenFeedScreen> {
                   isFullscreen: true,
                   currentUser: widget.currentUser,
                   onRequestFullscreen: null,
+                  messageIdForStreak: widget.messageIdForStreak,
                 );
               },
             ),

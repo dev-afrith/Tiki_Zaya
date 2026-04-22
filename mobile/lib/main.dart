@@ -1,14 +1,16 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart' show kIsWeb, debugPrint;
 import 'package:firebase_core/firebase_core.dart';
-import 'package:firebase_auth/firebase_auth.dart';
 import 'package:mobile/services/api_service.dart';
+import 'package:mobile/services/notification_service.dart';
 import 'package:mobile/services/theme_controller.dart';
 import 'package:mobile/screens/main_navigation.dart';
 import 'package:mobile/screens/profile_setup_screen.dart';
 import 'package:mobile/screens/welcome_screen.dart';
 
 import 'package:google_fonts/google_fonts.dart';
+
+final GlobalKey<NavigatorState> navigatorKey = GlobalKey<NavigatorState>();
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -98,6 +100,7 @@ class TikiZayaApp extends StatelessWidget {
       animation: themeController,
       builder: (context, _) {
         return MaterialApp(
+          navigatorKey: navigatorKey,
           title: 'Tiki Zaya',
           debugShowCheckedModeBanner: false,
           themeMode: themeController.themeMode,
@@ -139,9 +142,9 @@ class _SplashRouterState extends State<SplashRouter> {
     }
 
     try {
-      final user = FirebaseAuth.instance.currentUser;
-      if (user != null) {
-        final profile = await ApiService.getProfile(user.uid);
+      final summary = await ApiService.getGamificationSummary();
+      final profile = summary['user'] as Map<String, dynamic>? ?? <String, dynamic>{};
+      if (profile.isNotEmpty) {
         final pref = (profile['themePreference'] ?? '').toString();
         if (pref == 'light') {
           await appThemeController.setThemeMode(ThemeMode.light);
@@ -150,6 +153,7 @@ class _SplashRouterState extends State<SplashRouter> {
         }
         if (profile.containsKey('username') && profile['username'] != null && profile['username'].toString().isNotEmpty) {
           await ApiService.saveUser(profile);
+          await NotificationService.initialize();
           if (mounted) {
             if ((profile['status'] ?? '').toString() == 'blocked') {
               Navigator.pushReplacement(
@@ -174,13 +178,11 @@ class _SplashRouterState extends State<SplashRouter> {
             );
           }
         }
-      } else {
-        if (mounted) {
-          Navigator.pushReplacement(
-            context,
-            MaterialPageRoute(builder: (_) => const WelcomeScreen()),
-          );
-        }
+      } else if (mounted) {
+        Navigator.pushReplacement(
+          context,
+          MaterialPageRoute(builder: (_) => const WelcomeScreen()),
+        );
       }
     } catch (e) {
       if (mounted) {

@@ -3,7 +3,8 @@ import 'package:mobile/services/api_service.dart';
 
 class CommentsSheet extends StatefulWidget {
   final String videoId;
-  const CommentsSheet({super.key, required this.videoId});
+  final VoidCallback? onGamificationChanged;
+  const CommentsSheet({super.key, required this.videoId, this.onGamificationChanged});
 
   @override
   State<CommentsSheet> createState() => _CommentsSheetState();
@@ -123,6 +124,7 @@ class _CommentsSheetState extends State<CommentsSheet> {
         _commentController.clear();
         _replyTo = null;
       });
+      widget.onGamificationChanged?.call();
     } catch (e) {
       debugPrint('Comment error: $e');
     }

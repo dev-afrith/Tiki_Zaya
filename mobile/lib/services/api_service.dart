@@ -12,13 +12,23 @@ class ApiService {
   static String get socketBaseUrl => ApiConfig.baseUrl;
 
   static final _dio = dio.Dio(dio.BaseOptions(
-    connectTimeout: const Duration(seconds: 30),
-    receiveTimeout: const Duration(seconds: 30),
+    connectTimeout: const Duration(seconds: 120),
+    receiveTimeout: const Duration(seconds: 120),
     validateStatus: (status) => true, // Don't throw on any status code
   ));
 
   // Get a valid Firebase ID token — waits for auth state on web
   static Future<String?> getToken() async {
+    final prefs = await SharedPreferences.getInstance();
+    final cachedToken = prefs.getString('token');
+    final refreshToken = prefs.getString('refreshToken');
+    if (cachedToken != null && cachedToken.isNotEmpty && refreshToken != null && refreshToken.isNotEmpty) {
+      if (_isJwtExpiring(cachedToken)) {
+        return _refreshLocalToken();
+      }
+      return cachedToken;
+    }
+
     User? user = FirebaseAuth.instance.currentUser;
 
     // On web, currentUser may be null right after page load while Firebase
@@ -48,9 +58,47 @@ class ApiService {
       } catch (_) {}
     }
 
-    // Fallback to cached token
+    final token = prefs.getString('token');
+    if (token == null || token.isEmpty) return null;
+    if (_isJwtExpiring(token)) {
+      return _refreshLocalToken();
+    }
+    return token;
+  }
+
+  static bool _isJwtExpiring(String token) {
+    try {
+      final parts = token.split('.');
+      if (parts.length != 3) return false;
+      final payload = jsonDecode(utf8.decode(base64Url.decode(base64Url.normalize(parts[1]))));
+      final exp = payload['exp'];
+      if (exp is! num) return false;
+      final expiresAt = DateTime.fromMillisecondsSinceEpoch(exp.toInt() * 1000);
+      return expiresAt.isBefore(DateTime.now().add(const Duration(minutes: 1)));
+    } catch (_) {
+      return false;
+    }
+  }
+
+  static Future<String?> _refreshLocalToken() async {
     final prefs = await SharedPreferences.getInstance();
-    return prefs.getString('token');
+    final refreshToken = prefs.getString('refreshToken');
+    if (refreshToken == null || refreshToken.isEmpty) return prefs.getString('token');
+
+    try {
+      final response = await http.post(
+        Uri.parse('${ApiConfig.baseUrl}/api/auth/refresh'),
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({'refreshToken': refreshToken}),
+      );
+      if (response.statusCode != 200) return null;
+      final decoded = jsonDecode(response.body);
+      if (decoded is Map<String, dynamic>) {
+        await saveSession(decoded);
+        return (decoded['accessToken'] ?? decoded['token'])?.toString();
+      }
+    } catch (_) {}
+    return null;
   }
 
   static Future<String?> _refreshFirebaseToken() async {
@@ -84,6 +132,19 @@ class ApiService {
     await prefs.setString('token', token);
   }
 
+  static Future<void> saveSession(Map<String, dynamic> data) async {
+    final accessToken = (data['accessToken'] ?? data['token'] ?? '').toString();
+    final refreshToken = (data['refreshToken'] ?? '').toString();
+    if (accessToken.isNotEmpty) await saveToken(accessToken);
+    if (refreshToken.isNotEmpty) {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString('refreshToken', refreshToken);
+    }
+    if (data['user'] is Map<String, dynamic>) {
+      await saveUser(_standardizeUser(Map<String, dynamic>.from(data['user'] as Map)));
+    }
+  }
+
   // Store user data
   static Future<void> saveUser(Map<String, dynamic> user) async {
     final prefs = await SharedPreferences.getInstance();
@@ -113,25 +174,74 @@ class ApiService {
   // Clear session
   static Future<void> logout() async {
     final prefs = await SharedPreferences.getInstance();
+    final token = prefs.getString('token');
+    final refreshToken = prefs.getString('refreshToken');
+    if (token != null && refreshToken != null) {
+      try {
+        await http.post(
+          Uri.parse('${ApiConfig.baseUrl}/api/auth/logout'),
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': 'Bearer $token',
+          },
+          body: jsonEncode({'refreshToken': refreshToken}),
+        );
+      } catch (_) {}
+    }
     await prefs.clear();
   }
 
   // Check if logged in
   static Future<bool> isLoggedIn() async {
     final token = await getToken();
-    return token != null;
+    return token != null && token.isNotEmpty;
   }
 
   // ─── AUTH ─────────────────────────────────────────────
 
-  static Future<Map<String, dynamic>> register(
-      String username, String email, String password) async {
+  static Future<List<dynamic>> getAccountsByPhone(String phone) async {
+    try {
+      final response = await http.post(
+        Uri.parse('${ApiConfig.baseUrl}/api/auth/getAccountsByPhone'),
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({'phone': phone}),
+      );
+      if (response.statusCode == 200) {
+        final decoded = jsonDecode(response.body);
+        if (decoded is List) return decoded;
+      }
+    } catch (_) {}
+    return [];
+  }
+
+  static Future<Map<String, dynamic>> register({
+    required String username,
+    required String email,
+    required String phone,
+    required String password,
+    required DateTime dateOfBirth,
+    String? name,
+  }) async {
     final response = await http.post(
       Uri.parse('${ApiConfig.baseUrl}/api/auth/register'),
       headers: {'Content-Type': 'application/json'},
-      body: jsonEncode({'username': username, 'email': email, 'password': password}),
+      body: jsonEncode({
+        'username': username,
+        'email': email,
+        'phone': phone,
+        'password': password,
+        'dateOfBirth': dateOfBirth.toIso8601String(),
+        if (name != null) 'name': name,
+      }),
     );
-    return jsonDecode(response.body);
+    final decoded = jsonDecode(response.body);
+    if (decoded is Map<String, dynamic>) {
+      if (decoded.containsKey('accessToken') || decoded.containsKey('token')) {
+        await saveSession(decoded);
+      }
+      return decoded;
+    }
+    return {'message': 'Invalid server response'};
   }
 
   static Future<Map<String, dynamic>> verifyOTP(String email, String otp) async {
@@ -152,17 +262,20 @@ class ApiService {
     return jsonDecode(response.body);
   }
 
-  static Future<Map<String, dynamic>> login(String email, String password) async {
+  static Future<Map<String, dynamic>> login(String identifier, String password) async {
     final response = await http.post(
       Uri.parse('${ApiConfig.baseUrl}/api/auth/login'),
       headers: {'Content-Type': 'application/json'},
-      body: jsonEncode({'email': email, 'password': password}),
+      body: jsonEncode({'identifier': identifier, 'password': password}),
     );
     final data = jsonDecode(response.body);
-    if (data.containsKey('user')) {
+    if (data is Map<String, dynamic> && data.containsKey('user')) {
       data['user'] = _standardizeUser(data['user']);
     }
-    return data;
+    if (data is Map<String, dynamic> && (data.containsKey('accessToken') || data.containsKey('token'))) {
+      await saveSession(data);
+    }
+    return data is Map<String, dynamic> ? data : {'message': 'Invalid server response'};
   }
 
   static Future<Map<String, dynamic>> forgotPassword(String email) async {
@@ -259,7 +372,7 @@ class ApiService {
     Map<String, dynamic>? editingMetadata,
     Function(double)? onProgress,
   }) async {
-    final token = await _refreshFirebaseToken() ?? await getToken();
+    final token = await getToken();
     if (token == null) {
       return {'error': 'Authentication token missing. Please try logging in again.'};
     }
@@ -315,8 +428,8 @@ class ApiService {
       var statusCode = response.statusCode ?? 0;
 
       if (statusCode == 401) {
-        final refreshedToken = await _refreshFirebaseToken();
-        if (refreshedToken != null) {
+        final refreshedToken = await _refreshFirebaseToken() ?? await _refreshLocalToken();
+        if (refreshedToken != null && refreshedToken != token) {
           response = await sendUpload(refreshedToken);
           statusCode = response.statusCode ?? 0;
         }
@@ -365,6 +478,32 @@ class ApiService {
     return (data['inbox'] as List?) ?? [];
   }
 
+  static Future<Map<String, dynamic>> getInteractionStreak(String otherUserId) async {
+    try {
+      final token = await getToken();
+      final response = await http.get(
+        Uri.parse('${ApiConfig.baseUrl}/api/streaks/interaction/$otherUserId'),
+        headers: {'Authorization': 'Bearer $token'},
+      );
+      return jsonDecode(response.body);
+    } catch (_) {
+      return {'streak': {'streakCount': 0}};
+    }
+  }
+
+  static Future<Map<String, dynamic>> getLoginStreak() async {
+    try {
+      final token = await getToken();
+      final response = await http.get(
+        Uri.parse('${ApiConfig.baseUrl}/api/streaks/login'),
+        headers: {'Authorization': 'Bearer $token'},
+      );
+      return jsonDecode(response.body);
+    } catch (_) {
+      return {'streak': {'currentStreak': 0}};
+    }
+  }
+
   static Future<List<dynamic>> getConversation(String userId) async {
     final token = await getToken();
     final response = await http.get(
@@ -382,6 +521,7 @@ class ApiService {
     String text, {
     String messageType = 'text',
     Map<String, dynamic>? sharedVideo,
+    String? clientMessageId,
   }) async {
     final token = await getToken();
     final response = await http.post(
@@ -394,9 +534,125 @@ class ApiService {
         'text': text,
         'messageType': messageType,
         if (sharedVideo != null) 'sharedVideo': sharedVideo,
+        if (clientMessageId != null) 'clientMessageId': clientMessageId,
       }),
     );
     return jsonDecode(response.body);
+  }
+
+  static Future<Map<String, dynamic>> sendImageMessage(
+    String userId,
+    XFile imageFile, {
+    String caption = '',
+    String? clientMessageId,
+  }) async {
+    try {
+      final token = await getToken();
+      
+      dio.MultipartFile file;
+      if (kIsWeb) {
+        final bytes = await imageFile.readAsBytes();
+        file = dio.MultipartFile.fromBytes(
+          bytes,
+          filename: imageFile.name,
+        );
+      } else {
+        file = await dio.MultipartFile.fromFile(
+          imageFile.path,
+          filename: imageFile.name,
+        );
+      }
+
+      final formData = dio.FormData.fromMap({
+        'messageType': 'image',
+        'text': caption,
+        if (clientMessageId != null) 'clientMessageId': clientMessageId,
+        'image': file,
+      });
+
+      final response = await _dio.post(
+        '${ApiConfig.baseUrl}/api/messages/$userId',
+        data: formData,
+        options: dio.Options(
+          headers: {'Authorization': 'Bearer $token'},
+        ),
+      );
+
+      if (response.statusCode == 201 && response.data is Map<String, dynamic>) {
+        return response.data as Map<String, dynamic>;
+      }
+      return {'error': 'Failed to send image: ${response.statusMessage}'};
+    } catch (e) {
+      return {'error': 'Image upload error: $e'};
+    }
+  }
+
+  static Future<Map<String, dynamic>> sendVoiceMessage(
+    String userId,
+    String filePath, {
+    String? clientMessageId,
+  }) async {
+    try {
+      final token = await getToken();
+      final formData = dio.FormData.fromMap({
+        'messageType': 'voice',
+        if (clientMessageId != null) 'clientMessageId': clientMessageId,
+        'voice': await dio.MultipartFile.fromFile(
+          filePath,
+          filename: 'voice_${DateTime.now().millisecondsSinceEpoch}.m4a',
+        ),
+      });
+
+      final response = await _dio.post(
+        '${ApiConfig.baseUrl}/api/messages/$userId',
+        data: formData,
+        options: dio.Options(
+          headers: {'Authorization': 'Bearer $token'},
+        ),
+      );
+
+      if (response.statusCode == 201 && response.data is Map<String, dynamic>) {
+        return response.data as Map<String, dynamic>;
+      }
+      return {'error': 'Failed to send voice message'};
+    } catch (e) {
+      return {'error': 'Voice upload error: $e'};
+    }
+  }
+
+  static Future<Map<String, dynamic>> initiateCall(String toUserId, {required String type}) async {
+    try {
+      final token = await getToken();
+      final response = await http.post(
+        Uri.parse('${ApiConfig.baseUrl}/api/calls/initiate'),
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': 'Bearer $token',
+        },
+        body: jsonEncode({'toUserId': toUserId, 'type': type}),
+      );
+      return jsonDecode(response.body);
+    } catch (e) {
+      return {'error': e.toString()};
+    }
+  }
+
+  static Future<void> handleCallAction(String toUserId, String channelName, String action) async {
+    try {
+      final token = await getToken();
+      await http.post(
+        Uri.parse('${ApiConfig.baseUrl}/api/calls/action'),
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': 'Bearer $token',
+        },
+        body: jsonEncode({
+          'toUserId': toUserId,
+          'channelName': channelName,
+          'action': action,
+        }),
+      );
+    } catch (_) {}
   }
 
   static Future<Map<String, dynamic>> getUnreadMessagesCount() async {
@@ -421,6 +677,26 @@ class ApiService {
       Uri.parse('${ApiConfig.baseUrl}/api/messages/read/$userId'),
       headers: {'Authorization': 'Bearer $token'},
     );
+  }
+
+  static Future<Map<String, dynamic>> acknowledgeReelWatch(String messageId, double durationSeconds) async {
+    try {
+      final token = await getToken();
+      final response = await http.post(
+        Uri.parse('${ApiConfig.baseUrl}/api/messages/reel/acknowledge'),
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': 'Bearer $token',
+        },
+        body: jsonEncode({
+          'messageId': messageId,
+          'durationWatched': durationSeconds,
+        }),
+      );
+      return jsonDecode(response.body);
+    } catch (_) {
+      return {'error': 'Failed to acknowledge watch'};
+    }
   }
 
   static Future<Map<String, dynamic>> toggleLike(String videoId) async {
@@ -539,6 +815,9 @@ class ApiService {
 
     final decoded = jsonDecode(response.body);
     if (decoded is Map<String, dynamic>) {
+      if (decoded['user'] is Map<String, dynamic>) {
+        decoded['user'] = _standardizeUser(Map<String, dynamic>.from(decoded['user'] as Map));
+      }
       return decoded;
     }
     return {'user': <String, dynamic>{}, 'gamification': <String, dynamic>{}};
@@ -573,6 +852,40 @@ class ApiService {
       return decoded;
     }
     return {'ok': false};
+  }
+
+  static Future<Map<String, dynamic>> claimTaskReward(String taskId) async {
+    final token = await getToken();
+    if (token == null) return {'ok': false, 'message': 'Not authenticated'};
+    final response = await http.post(
+      Uri.parse('${ApiConfig.baseUrl}/api/gamification/tasks/$taskId/claim'),
+      headers: {'Authorization': 'Bearer $token'},
+    );
+    final decoded = jsonDecode(response.body);
+    return decoded is Map<String, dynamic> ? decoded : {'ok': false};
+  }
+
+  static Future<Map<String, dynamic>> claimMilestoneReward(String rewardId) async {
+    final token = await getToken();
+    if (token == null) return {'ok': false, 'message': 'Not authenticated'};
+    final response = await http.post(
+      Uri.parse('${ApiConfig.baseUrl}/api/gamification/rewards/$rewardId/claim'),
+      headers: {'Authorization': 'Bearer $token'},
+    );
+    final decoded = jsonDecode(response.body);
+    return decoded is Map<String, dynamic> ? decoded : {'ok': false};
+  }
+
+  static Future<Map<String, dynamic>> checkForUpdate({String installedVersion = '1.0.0'}) async {
+    try {
+      final response = await http.get(
+        Uri.parse('${ApiConfig.baseUrl}/api/gamification/app-update?version=${Uri.encodeComponent(installedVersion)}'),
+      );
+      final decoded = jsonDecode(response.body);
+      return decoded is Map<String, dynamic> ? decoded : {'updateAvailable': false};
+    } catch (_) {
+      return {'updateAvailable': false, 'message': 'Unable to check updates'};
+    }
   }
 
   static Future<List<dynamic>> getLeaderboard() async {
@@ -731,6 +1044,22 @@ class ApiService {
       headers: {'Authorization': 'Bearer $token'},
     );
     return jsonDecode(response.body);
+  }
+
+  static Future<void> saveDeviceToken({
+    required String token,
+    String platform = '',
+  }) async {
+    final authToken = await getToken();
+    if (authToken == null || token.isEmpty) return;
+    await http.post(
+      Uri.parse('${ApiConfig.baseUrl}/api/users/device-token'),
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': 'Bearer $authToken',
+      },
+      body: jsonEncode({'token': token, 'platform': platform}),
+    );
   }
 
   static Future<Map<String, dynamic>> deleteAccount() async {

@@ -4,6 +4,8 @@ import 'package:mobile/screens/login_screen.dart';
 import 'package:mobile/screens/edit_profile_screen.dart';
 import 'package:mobile/screens/settings_screen.dart';
 import 'package:mobile/screens/fullscreen_feed_screen.dart';
+import 'package:mobile/screens/rewards_screen.dart';
+import 'package:mobile/widgets/gamification_widgets.dart';
 import 'package:share_plus/share_plus.dart';
 import 'package:url_launcher/url_launcher.dart';
 
@@ -23,6 +25,9 @@ class _ProfileScreenState extends State<ProfileScreen> {
   bool _isFollowing = false;
   String? _currentUserId;
   int _selectedTab = 0; // 0: posts, 1: reposts
+  int _tzPoints = 0;
+  int _streakDays = 0;
+  List<String> _badges = const [];
 
   @override
   void initState() {
@@ -32,11 +37,12 @@ class _ProfileScreenState extends State<ProfileScreen> {
 
   Future<void> _loadProfile() async {
     try {
-      final currentUser = await ApiService.getUser();
-      _currentUserId = currentUser?['id']?.toString();
+      final summary = await ApiService.getGamificationSummary();
+      final currentUser = summary['user'] as Map<String, dynamic>?;
+      _currentUserId = currentUser?['id']?.toString() ?? currentUser?['_id']?.toString();
 
       final targetUserId = widget.userId ?? _currentUserId;
-      if (targetUserId == null) {
+      if (targetUserId == null || targetUserId.isEmpty) {
         if (mounted) {
           setState(() {
             _isLoading = false;
@@ -45,16 +51,30 @@ class _ProfileScreenState extends State<ProfileScreen> {
         return;
       }
 
-      final profile = await ApiService.getProfile(targetUserId);
+      final profile = widget.userId == null
+          ? (summary['user'] as Map<String, dynamic>? ?? <String, dynamic>{})
+          : await ApiService.getProfile(targetUserId);
       final videos = await ApiService.getUserVideos(targetUserId);
-      final reposts = await ApiService.getUserReposts(targetUserId);
+      List<dynamic> reposts = [];
+      try {
+        reposts = await ApiService.getUserReposts(targetUserId);
+      } catch (_) {}
 
       if (mounted) {
         setState(() {
-          _user = profile;
+          _user = profile.isNotEmpty ? profile : null;
           _userVideos = videos;
           _repostedVideos = reposts;
-          _isFollowing = (profile['followers'] as List?)?.contains(_currentUserId) ?? false;
+          final gamification = (widget.userId == null ? summary['gamification'] : profile['gamification']) as Map<String, dynamic>?;
+          _tzPoints = _readInt(gamification?['points'], _tzPoints);
+          _streakDays = _readInt(gamification?['streakDays'], _streakDays);
+          _badges = _readBadges(gamification?['badges']);
+          if (profile.isNotEmpty) {
+            final followers = profile['followers'];
+            if (followers is List) {
+              _isFollowing = followers.contains(_currentUserId);
+            }
+          }
           _isLoading = false;
         });
       }
@@ -73,10 +93,18 @@ class _ProfileScreenState extends State<ProfileScreen> {
       final result = await ApiService.toggleFollow(_user!['id'].toString());
       setState(() {
         _isFollowing = result['following'] ?? false;
-        if (_isFollowing) {
-          (_user!['followers'] as List).add(_currentUserId);
+        final followers = _user!['followers'];
+        if (followers is List) {
+          if (_isFollowing) {
+            if (!followers.any((id) => id.toString() == _currentUserId)) {
+              followers.add(_currentUserId);
+            }
+          } else {
+            followers.removeWhere((id) => id.toString() == _currentUserId);
+          }
         } else {
-          (_user!['followers'] as List).remove(_currentUserId);
+          final currentCount = _readCount(_user?['followersCount'] ?? _user?['followers']);
+          _user!['followersCount'] = _isFollowing ? currentCount + 1 : (currentCount > 0 ? currentCount - 1 : 0);
         }
       });
     } catch (_) {}
@@ -94,7 +122,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
   }
 
   Future<void> _shareProfile() async {
-    final username = (_user?['username'] ?? 'user').toString();
+    final username = _profileUsername(fallback: _profileDisplayName());
     final bio = (_user?['bio'] ?? '').toString();
     await Share.share('Check out @$username on TikiZaya!\n$bio');
   }
@@ -126,7 +154,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
               )
             : null,
         title: Text(
-          '@${_user?['username'] ?? 'Profile'}',
+          _profileTitle,
           style: TextStyle(color: fg, fontWeight: FontWeight.w700),
         ),
         centerTitle: true,
@@ -203,7 +231,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                             : null,
                         child: _profilePhotoUrl.isEmpty
                             ? Text(
-                                (_user?['username'] ?? 'U').toString()[0].toUpperCase(),
+                                _profileInitial,
                                 style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 28),
                               )
                             : null,
@@ -216,12 +244,12 @@ class _ProfileScreenState extends State<ProfileScreen> {
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Text(
-                          '@${(_user?['username'] ?? 'unknown').toString()}',
+                          _profileTitle,
                           style: TextStyle(color: fg, fontSize: 22, fontWeight: FontWeight.w800),
                         ),
                         const SizedBox(height: 4),
                         Text(
-                          (_user?['name'] ?? _user?['username'] ?? 'Unknown').toString(),
+                          _profileDisplayName(),
                           style: TextStyle(color: muted, fontSize: 14),
                         ),
                       ],
@@ -249,8 +277,8 @@ class _ProfileScreenState extends State<ProfileScreen> {
                 mainAxisAlignment: MainAxisAlignment.spaceAround,
                 children: [
                   _buildStat('${_userVideos.length}', 'Posts'),
-                  _buildStat('${(_user?['followers'] as List?)?.length ?? 0}', 'Followers'),
-                  _buildStat('${(_user?['following'] as List?)?.length ?? 0}', 'Following'),
+                  _buildStat('$_followersCount', 'Followers'),
+                  _buildStat('$_followingCount', 'Following'),
                 ],
               ),
             ),
@@ -294,6 +322,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                 ],
               ),
             ),
+            _buildGamificationSection(),
             const Divider(color: Colors.white10, thickness: 0.6),
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 16),
@@ -487,6 +516,83 @@ class _ProfileScreenState extends State<ProfileScreen> {
     );
   }
 
+  Widget _buildGamificationSection() {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 14, 16, 12),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Expanded(
+                child: TZPointsWidget(
+                  points: _tzPoints,
+                  onTap: _openRewards,
+                  compact: true,
+                ),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Align(
+                  alignment: Alignment.centerRight,
+                  child: StreakWidget(days: _streakDays, compact: true),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 10),
+          SizedBox(
+            height: 42,
+            child: ListView.separated(
+              scrollDirection: Axis.horizontal,
+              itemBuilder: (_, index) => BadgeWidget(
+                icon: Icons.verified,
+                label: _badges[index],
+              ),
+              separatorBuilder: (_, __) => const SizedBox(width: 8),
+              itemCount: _badges.length,
+            ),
+          ),
+          if (_badges.isEmpty)
+            Padding(
+              padding: const EdgeInsets.only(top: 4),
+              child: Text(
+                'Badges unlock as you keep logging in, watching, and contributing.',
+                style: TextStyle(color: Colors.grey[600], fontSize: 12),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
+  void _openRewards() {
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => const RewardsScreen(),
+      ),
+    );
+  }
+
+  int _readInt(dynamic value, int fallback) {
+    if (value is int) return value;
+    if (value is num) return value.toInt();
+    if (value is String) {
+      final parsed = int.tryParse(value);
+      if (parsed != null) return parsed;
+    }
+    return fallback;
+  }
+
+  List<String> _readBadges(dynamic value) {
+    if (value is List) {
+      return value.map((item) => item.toString()).where((item) => item.isNotEmpty).toList();
+    }
+    return const [];
+  }
+
   String _videoPreviewUrl(Map<String, dynamic> video) {
     final thumbnail = (video['thumbnailUrl'] ?? '').toString();
     if (thumbnail.isNotEmpty) return thumbnail;
@@ -542,6 +648,97 @@ class _ProfileScreenState extends State<ProfileScreen> {
     final profilePic = (_user?['profilePic'] ?? '').toString();
     if (profilePic.isNotEmpty) return profilePic;
     return (_user?['profilePhotoUrl'] ?? '').toString();
+  }
+
+  String get _profileInitial {
+    final candidates = [
+      _profileUsername(fallback: ''),
+      _profileDisplayName(),
+      (_user?['email'] ?? '').toString().trim(),
+    ];
+
+    for (final candidate in candidates) {
+      final value = candidate.trim();
+      if (value.isNotEmpty) {
+        return value[0].toUpperCase();
+      }
+    }
+
+    return 'U';
+  }
+
+  String _profileUsername({required String fallback}) {
+    final candidates = [
+      _user?['username'],
+      _user?['userName'],
+      _user?['handle'],
+    ];
+
+    for (final candidate in candidates) {
+      final value = candidate?.toString().trim() ?? '';
+      if (value.isNotEmpty && value.toLowerCase() != 'user') {
+        return value;
+      }
+    }
+
+    return fallback;
+  }
+
+  String _profileDisplayName() {
+    final candidates = [
+      _user?['name'],
+      _user?['displayName'],
+      _user?['fullName'],
+    ];
+
+    for (final candidate in candidates) {
+      final value = candidate?.toString().trim() ?? '';
+      if (value.isNotEmpty && value.toLowerCase() != 'user') {
+        return value;
+      }
+    }
+
+    final username = _profileUsername(fallback: '');
+    if (username.isNotEmpty) {
+      return username;
+    }
+
+    final email = (_user?['email'] ?? '').toString().trim();
+    if (email.isNotEmpty && email.contains('@')) {
+      return email.split('@').first;
+    }
+
+    return 'Unknown';
+  }
+
+  String get _profileTitle {
+    final username = _profileUsername(fallback: '');
+    if (username.isNotEmpty) return '@$username';
+    final displayName = _profileDisplayName();
+    return displayName == 'Unknown' ? 'Profile' : displayName;
+  }
+
+  int get _followersCount => _readCount(_user?['followersCount'] ?? _user?['followers']);
+
+  int get _followingCount => _readCount(_user?['followingCount'] ?? _user?['following']);
+
+  int _readCount(dynamic value) {
+    if (value is List) {
+      return value.length;
+    }
+    if (value is int) {
+      return value;
+    }
+    if (value is num) {
+      return value.toInt();
+    }
+    if (value is String) {
+      final parsed = int.tryParse(value);
+      if (parsed != null) {
+        return parsed;
+      }
+    }
+    return 0;
   }
 
   Widget _buildProfileMeta() {

@@ -51,6 +51,22 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
     }
   }
 
+  String _formatTimeAgo(String? dateStr) {
+    if (dateStr == null || dateStr.isEmpty) return '';
+    try {
+      final date = DateTime.parse(dateStr).toLocal();
+      final now = DateTime.now();
+      final diff = now.difference(date);
+      if (diff.inSeconds < 60) return '${diff.inSeconds}s';
+      if (diff.inMinutes < 60) return '${diff.inMinutes}m';
+      if (diff.inHours < 24) return '${diff.inHours}h';
+      if (diff.inDays < 7) return '${diff.inDays}d';
+      return '${diff.inDays ~/ 7}w';
+    } catch (_) {
+      return '';
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -99,71 +115,91 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
                       final actor = item['actor'];
                       final actorName = actor is Map ? (actor['username'] ?? 'Someone').toString() : 'Someone';
                       final type = (item['type'] ?? '').toString();
-                      final icon = type == 'message'
-                          ? Icons.message_outlined
-                          : type == 'comment'
-                              ? Icons.chat_bubble_outline
-                              : type == 'post'
-                                  ? Icons.smart_display_rounded
-                                  : Icons.favorite;
+                      final body = (item['body'] ?? '').toString();
+                      final createdAt = item['createdAt']?.toString();
+                      final title = (item['title'] ?? '').toString();
 
-                      return Padding(
-                        padding: const EdgeInsets.only(bottom: 10),
-                        child: GestureDetector(
-                          onTap: () {
-                            if (type == 'message') {
-                              Navigator.push(
-                                context,
-                                MaterialPageRoute(builder: (_) => const ChatScreen()),
-                              );
+                      final icon = type == 'message'
+                          ? Icons.message
+                          : type == 'comment'
+                              ? Icons.chat_bubble
+                              : type == 'follow'
+                                  ? Icons.person_add
+                                  : type == 'post'
+                                      ? Icons.smart_display_rounded
+                                      : Icons.favorite;
+
+                      // Extract action from body (e.g., "Someone started following you")
+                      String actionText = body.replaceFirst(actorName, '').trim();
+                      if (actionText.isEmpty) actionText = title;
+
+                      return InkWell(
+                        onTap: () {
+                          if (type == 'message') {
+                            Navigator.push(context, MaterialPageRoute(builder: (_) => const ChatScreen()));
+                          } else if (type == 'follow') {
+                            if (actor is Map && actor['_id'] != null) {
+                              Navigator.push(context, MaterialPageRoute(builder: (_) => ProfileScreen(userId: actor['_id'].toString())));
                             }
-                          },
-                          child: Container(
-                            padding: const EdgeInsets.all(14),
-                            decoration: BoxDecoration(
-                              color: Colors.white.withValues(alpha: 0.04),
-                              borderRadius: BorderRadius.circular(16),
-                              border: Border.all(color: Colors.white12),
-                            ),
-                            child: Row(
-                              children: [
-                                CircleAvatar(
-                                  radius: 20,
-                                  backgroundColor: const Color(0xFFFF006E).withValues(alpha: 0.18),
-                                  backgroundImage: actor is Map && (actor['profilePic'] ?? '').toString().isNotEmpty
-                                      ? NetworkImage(actor['profilePic'].toString())
-                                      : null,
-                                  child: actor is Map && (actor['profilePic'] ?? '').toString().isEmpty
-                                      ? Text(
-                                          actorName.isNotEmpty ? actorName[0].toUpperCase() : 'U',
-                                          style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
-                                        )
-                                      : Icon(icon, color: const Color(0xFFFF006E), size: 18),
-                                ),
-                                const SizedBox(width: 12),
-                                Expanded(
-                                  child: Column(
-                                    crossAxisAlignment: CrossAxisAlignment.start,
-                                    children: [
-                                      Text(
-                                        (item['title'] ?? 'Update').toString(),
-                                        style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w700),
+                          }
+                        },
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 4),
+                          child: Row(
+                            crossAxisAlignment: CrossAxisAlignment.center,
+                            children: [
+                              Stack(
+                                children: [
+                                  CircleAvatar(
+                                    radius: 26,
+                                    backgroundColor: Colors.white12,
+                                    backgroundImage: actor is Map && (actor['profilePic'] ?? '').toString().isNotEmpty
+                                        ? NetworkImage(actor['profilePic'].toString())
+                                        : null,
+                                    child: actor is Map && (actor['profilePic'] ?? '').toString().isEmpty
+                                        ? Text(
+                                            actorName.isNotEmpty ? actorName[0].toUpperCase() : 'U',
+                                            style: const TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold),
+                                          )
+                                        : null,
+                                  ),
+                                  Positioned(
+                                    bottom: 0,
+                                    right: 0,
+                                    child: Container(
+                                      padding: const EdgeInsets.all(4),
+                                      decoration: BoxDecoration(
+                                        color: const Color(0xFFFF006E),
+                                        shape: BoxShape.circle,
+                                        border: Border.all(color: Colors.black, width: 2),
                                       ),
-                                      const SizedBox(height: 3),
-                                      Text(
-                                        (item['body'] ?? '').toString(),
-                                        style: const TextStyle(color: Colors.white70, fontSize: 13),
+                                      child: Icon(icon, color: Colors.white, size: 10),
+                                    ),
+                                  )
+                                ],
+                              ),
+                              const SizedBox(width: 14),
+                              Expanded(
+                                child: RichText(
+                                  text: TextSpan(
+                                    style: const TextStyle(color: Colors.white, fontSize: 14, height: 1.4, fontFamily: 'Outfit'),
+                                    children: [
+                                      TextSpan(text: actorName, style: const TextStyle(fontWeight: FontWeight.bold)),
+                                      TextSpan(text: ' $actionText', style: const TextStyle(color: Colors.white70)),
+                                      TextSpan(
+                                        text: '  ${_formatTimeAgo(createdAt)}',
+                                        style: const TextStyle(color: Colors.white38, fontSize: 13),
                                       ),
                                     ],
                                   ),
                                 ),
-                              ],
-                            ),
+                              ),
+                            ],
                           ),
                         ),
                       );
                     }),
-                  const SizedBox(height: 18),
+                  const SizedBox(height: 24),
                   const Text('Suggestions', style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.w800)),
                   const SizedBox(height: 12),
                   ..._suggestions.take(8).map((user) {

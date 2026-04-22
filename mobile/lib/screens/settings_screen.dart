@@ -1,8 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:mobile/services/api_service.dart';
+import 'package:mobile/services/auth_service.dart';
 import 'package:mobile/services/theme_controller.dart';
 import 'package:mobile/screens/login_screen.dart';
 import 'package:mobile/screens/archived_contents_screen.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 class SettingsScreen extends StatefulWidget {
   const SettingsScreen({super.key});
@@ -15,6 +17,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
   Map<String, dynamic>? _user;
   bool _isPrivate = false;
   bool _isLoading = true;
+  bool _checkingUpdate = false;
 
   @override
   void initState() {
@@ -143,14 +146,210 @@ class _SettingsScreenState extends State<SettingsScreen> {
     );
   }
 
+  Future<void> _updateAccountDetails(Map<String, dynamic> payload) async {
+    try {
+      final updated = await ApiService.updateProfile(payload);
+      await ApiService.saveUser(updated);
+      if (!mounted) return;
+      setState(() {
+        _user = updated;
+        _isPrivate = updated['isPrivate'] ?? _isPrivate;
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Account details updated')),
+      );
+    } catch (_) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Failed to update account details')),
+      );
+    }
+  }
+
+  void _showEditAccountField({
+    required String title,
+    required String field,
+    required String initialValue,
+    TextInputType keyboardType = TextInputType.text,
+  }) {
+    final valueController = TextEditingController(text: initialValue);
+    final passwordController = TextEditingController();
+    bool isSaving = false;
+
+    showDialog(
+      context: context,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          backgroundColor: const Color(0xFF16213E),
+          title: Text(title, style: const TextStyle(color: Colors.white)),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              TextField(
+                controller: valueController,
+                keyboardType: keyboardType,
+                style: const TextStyle(color: Colors.white),
+                decoration: InputDecoration(
+                  labelText: title,
+                  labelStyle: TextStyle(color: Colors.grey[500]),
+                  enabledBorder: const OutlineInputBorder(borderSide: BorderSide(color: Colors.white12)),
+                  focusedBorder: const OutlineInputBorder(borderSide: BorderSide(color: Color(0xFFFF006E))),
+                ),
+              ),
+              const SizedBox(height: 14),
+              _buildDialogField(passwordController, 'Current Password', true),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: Text('Cancel', style: TextStyle(color: Colors.grey[400])),
+            ),
+            ElevatedButton(
+              onPressed: isSaving
+                  ? null
+                  : () async {
+                      setDialogState(() => isSaving = true);
+                      await _updateAccountDetails({
+                        field: valueController.text.trim(),
+                        'currentPassword': passwordController.text,
+                      });
+                      if (context.mounted) Navigator.pop(context);
+                    },
+              style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFFFF006E)),
+              child: const Text('Save', style: TextStyle(color: Colors.white)),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  void _showEditDobDialog() {
+    DateTime selected = DateTime.tryParse((_user?['dateOfBirth'] ?? '').toString()) ?? DateTime(DateTime.now().year - 18);
+    final passwordController = TextEditingController();
+    bool isSaving = false;
+
+    showDialog(
+      context: context,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          backgroundColor: const Color(0xFF16213E),
+          title: const Text('Edit Date of Birth', style: TextStyle(color: Colors.white)),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              ListTile(
+                contentPadding: EdgeInsets.zero,
+                title: Text(_formatDob(selected.toIso8601String()), style: const TextStyle(color: Colors.white)),
+                trailing: const Icon(Icons.calendar_month, color: Colors.white70),
+                onTap: () async {
+                  final now = DateTime.now();
+                  final picked = await showDatePicker(
+                    context: context,
+                    initialDate: selected,
+                    firstDate: DateTime(now.year - 100),
+                    lastDate: now,
+                  );
+                  if (picked != null) setDialogState(() => selected = picked);
+                },
+              ),
+              const SizedBox(height: 14),
+              _buildDialogField(passwordController, 'Current Password', true),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: Text('Cancel', style: TextStyle(color: Colors.grey[400])),
+            ),
+            ElevatedButton(
+              onPressed: isSaving
+                  ? null
+                  : () async {
+                      setDialogState(() => isSaving = true);
+                      await _updateAccountDetails({
+                        'dateOfBirth': selected.toIso8601String(),
+                        'currentPassword': passwordController.text,
+                      });
+                      if (context.mounted) Navigator.pop(context);
+                    },
+              style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFFFF006E)),
+              child: const Text('Save', style: TextStyle(color: Colors.white)),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  String _formatDob(String raw) {
+    final date = DateTime.tryParse(raw);
+    if (date == null) return 'Not provided';
+    return '${date.day.toString().padLeft(2, '0')}/${date.month.toString().padLeft(2, '0')}/${date.year}';
+  }
+
   void _logout() async {
-    await ApiService.logout();
+    await AuthService.logout();
     if (mounted) {
       Navigator.pushAndRemoveUntil(
         context,
         MaterialPageRoute(builder: (_) => const LoginScreen()),
         (route) => false,
       );
+    }
+  }
+
+  Future<void> _checkForUpdates() async {
+    if (_checkingUpdate) return;
+    setState(() => _checkingUpdate = true);
+    try {
+      final update = await ApiService.checkForUpdate();
+      if (!mounted) return;
+      final changelog = (update['changelog'] as List?)?.map((item) => item.toString()).toList() ?? const <String>[];
+      final latestVersion = (update['latestVersion'] ?? '1.0.0').toString();
+      final apkUrl = (update['apkUrl'] ?? '').toString();
+      final available = update['updateAvailable'] == true;
+
+      showDialog(
+        context: context,
+        builder: (context) => AlertDialog(
+          backgroundColor: const Color(0xFF161616),
+          title: Text(
+            available ? 'Update Available' : 'You are up to date',
+            style: const TextStyle(color: Colors.white),
+          ),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text('Latest version: $latestVersion', style: const TextStyle(color: Colors.white70)),
+              const SizedBox(height: 12),
+              ...changelog.map((item) => Padding(
+                    padding: const EdgeInsets.only(bottom: 6),
+                    child: Text('- $item', style: const TextStyle(color: Colors.white60)),
+                  )),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('Close'),
+            ),
+            if (available)
+              ElevatedButton(
+                onPressed: () async {
+                  final uri = Uri.tryParse(apkUrl);
+                  if (uri != null) await launchUrl(uri, mode: LaunchMode.externalApplication);
+                },
+                style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFFFF006E)),
+                child: const Text('Update', style: TextStyle(color: Colors.white)),
+              ),
+          ],
+        ),
+      );
+    } finally {
+      if (mounted) setState(() => _checkingUpdate = false);
     }
   }
 
@@ -240,14 +439,46 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
           _buildSectionHeader('Account Info'),
           ListTile(
+            leading: Icon(Icons.alternate_email_rounded, color: muted),
+            title: Text('Username', style: TextStyle(color: fg)),
+            subtitle: Text((_user?['username'] ?? 'Not provided').toString(), style: TextStyle(color: muted)),
+            trailing: Icon(Icons.edit_outlined, color: muted),
+            onTap: () => _showEditAccountField(
+              title: 'Edit Username',
+              field: 'username',
+              initialValue: (_user?['username'] ?? '').toString(),
+            ),
+          ),
+          ListTile(
             leading: Icon(Icons.email_outlined, color: muted),
             title: Text('Email', style: TextStyle(color: fg)),
             subtitle: Text((_user?['email'] ?? 'Not provided').toString(), style: TextStyle(color: muted)),
+            trailing: Icon(Icons.edit_outlined, color: muted),
+            onTap: () => _showEditAccountField(
+              title: 'Edit Email',
+              field: 'email',
+              initialValue: (_user?['email'] ?? '').toString(),
+              keyboardType: TextInputType.emailAddress,
+            ),
           ),
           ListTile(
             leading: Icon(Icons.phone_outlined, color: muted),
             title: Text('Phone', style: TextStyle(color: fg)),
             subtitle: Text((_user?['phone'] ?? 'Not provided').toString(), style: TextStyle(color: muted)),
+            trailing: Icon(Icons.edit_outlined, color: muted),
+            onTap: () => _showEditAccountField(
+              title: 'Edit Phone Number',
+              field: 'phone',
+              initialValue: (_user?['phone'] ?? '').toString(),
+              keyboardType: TextInputType.phone,
+            ),
+          ),
+          ListTile(
+            leading: Icon(Icons.cake_outlined, color: muted),
+            title: Text('Date of Birth', style: TextStyle(color: fg)),
+            subtitle: Text(_formatDob((_user?['dateOfBirth'] ?? '').toString()), style: TextStyle(color: muted)),
+            trailing: Icon(Icons.edit_outlined, color: muted),
+            onTap: _showEditDobDialog,
           ),
 
           _buildSectionHeader('Account'),
@@ -298,6 +529,15 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 MaterialPageRoute(builder: (_) => const ArchivedContentsScreen()),
               );
             },
+          ),
+          ListTile(
+            leading: Icon(Icons.system_update_alt_rounded, color: muted),
+            title: Text('Check for Updates', style: TextStyle(color: fg)),
+            subtitle: Text('Install the latest APK without Play Store.', style: TextStyle(color: muted, fontSize: 12)),
+            trailing: _checkingUpdate
+                ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2))
+                : Icon(Icons.chevron_right, color: muted),
+            onTap: _checkForUpdates,
           ),
           ListTile(
             leading: const Icon(Icons.delete_forever_outlined, color: Colors.redAccent),

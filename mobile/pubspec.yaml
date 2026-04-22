@@ -52,6 +52,11 @@ dependencies:
   file_picker: ^11.0.2
   permission_handler: ^11.3.1
   url_launcher: ^6.3.1
+  firebase_messaging: ^15.2.10
+  uuid: ^4.5.3
+  agora_rtc_engine: ^6.4.0
+  audioplayers: ^5.2.1
+  flutter_callkit_incoming: ^2.0.3+1
 
 dev_dependencies:
   flutter_test:
@@ -63,6 +68,18 @@ dev_dependencies:
   # package. See that file for information about deactivating specific lint
   # rules and activating additional ones.
   flutter_lints: ^5.0.0
+  flutter_launcher_icons: ^0.14.4
+
+flutter_launcher_icons:
+  image_path: assets/branding/logo.png
+  android: true
+  ios: true
+  web:
+    generate: true
+  windows:
+    generate: true
+  macos:
+    generate: true
 
 # For information on the generic Dart part of this file, see the
 # following page: https://dart.dev/tools/pub/pubspec

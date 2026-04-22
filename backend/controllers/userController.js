@@ -13,6 +13,7 @@ const {
   parseValidDob,
   verifyPassword,
 } = require('../utils/authSecurity');
+const { createAndEmitNotification } = require('../utils/notifications');
 
 cloudinary.config({
   cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
@@ -225,6 +226,19 @@ exports.toggleFollow = async (req, res) => {
 
     await currentUser.save();
     await targetUser.save();
+
+    // Trigger Notification for new follows
+    if (!isFollowing && req.app && req.app.get('io') && targetUser && currentUser) {
+      await createAndEmitNotification(req.app.get('io'), {
+        userId: targetUser._id,
+        actorUserId: req.userId,
+        type: 'follow',
+        title: 'New Follower',
+        body: `${currentUser.username || 'Someone'} started following you`,
+        entityType: 'user',
+        entityId: currentUser._id,
+      });
+    }
 
     res.status(200).json({
       following: !isFollowing,

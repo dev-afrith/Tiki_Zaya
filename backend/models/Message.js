@@ -17,13 +17,17 @@ const messageSchema = new mongoose.Schema({
     type: String,
     default: '',
     trim: true,
-    maxlength: 1000,
+    maxlength: 2000,
   },
   messageType: {
     type: String,
-    enum: ['text', 'reel', 'call', 'voice'],
+    enum: ['text', 'image', 'reel', 'call', 'voice'],
     default: 'text',
     index: true,
+  },
+  imageUrl: {
+    type: String,
+    default: '',
   },
   sharedVideo: {
     videoId: { type: String, default: '' },
@@ -33,9 +37,22 @@ const messageSchema = new mongoose.Schema({
     ownerId: { type: String, default: '' },
     ownerUsername: { type: String, default: '' },
   },
+  status: {
+    type: String,
+    enum: ['sent', 'delivered', 'seen'],
+    default: 'sent',
+  },
+  deliveredAt: {
+    type: Date,
+    default: null,
+  },
   readAt: {
     type: Date,
     default: null,
+  },
+  clientMessageId: {
+    type: String,
+    index: true,
   },
 }, { timestamps: true });
 

@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:mobile/services/api_service.dart';
 import 'package:mobile/screens/main_navigation.dart';
 import 'package:mobile/screens/reset_password_screen.dart';
+import 'package:mobile/screens/profile_setup_screen.dart';
 
 class VerificationScreen extends StatefulWidget {
   final String email;
@@ -61,11 +62,17 @@ class _VerificationScreenState extends State<VerificationScreen> {
 
         if (result.containsKey('token')) {
           await ApiService.saveToken(result['token']);
-          await ApiService.saveUser(result['user']);
+          final summary = await ApiService.getGamificationSummary();
+          final profile = summary['user'] as Map<String, dynamic>? ?? (result['user'] as Map<String, dynamic>? ?? <String, dynamic>{});
+          await ApiService.saveUser(profile);
           if (mounted) {
             Navigator.pushAndRemoveUntil(
               context,
-              MaterialPageRoute(builder: (_) => const MainNavigation()),
+              MaterialPageRoute(
+                builder: (_) => (profile['username'] ?? '').toString().isNotEmpty
+                    ? const MainNavigation()
+                    : const ProfileSetupScreen(),
+              ),
               (route) => false,
             );
           }
