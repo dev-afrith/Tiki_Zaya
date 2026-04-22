@@ -1,6 +1,5 @@
 const User = require('../models/User');
 const agoraService = require('../services/agoraService');
-const { sendNotification } = require('../services/notificationService'); // Assuming this exists or using FCM directly
 const admin = require('firebase-admin');
 
 // Helper to generate a numeric UID for Agora from MongoDB ID
