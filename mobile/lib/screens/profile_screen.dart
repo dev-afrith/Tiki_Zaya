@@ -6,8 +6,16 @@ import 'package:mobile/screens/settings_screen.dart';
 import 'package:mobile/screens/fullscreen_feed_screen.dart';
 import 'package:mobile/screens/rewards_screen.dart';
 import 'package:mobile/widgets/gamification_widgets.dart';
-import 'package:share_plus/share_plus.dart';
 import 'package:url_launcher/url_launcher.dart';
+
+import 'package:mobile/widgets/profile/profile_header.dart';
+import 'package:mobile/widgets/profile/stats_section.dart';
+import 'package:mobile/widgets/profile/action_buttons.dart';
+import 'package:mobile/widgets/profile/profile_streak_widget.dart';
+import 'package:mobile/widgets/profile/creator_insights.dart';
+import 'package:mobile/widgets/profile/profile_tabs.dart';
+import 'package:mobile/widgets/profile/profile_video_grid.dart';
+import 'package:mobile/widgets/profile/shareable_profile_card.dart';
 
 class ProfileScreen extends StatefulWidget {
   final String? userId;
@@ -122,447 +130,34 @@ class _ProfileScreenState extends State<ProfileScreen> {
   }
 
   Future<void> _shareProfile() async {
-    final username = _profileUsername(fallback: _profileDisplayName());
-    final bio = (_user?['bio'] ?? '').toString();
-    await Share.share('Check out @$username on TikiZaya!\n$bio');
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final isDark = Theme.of(context).brightness == Brightness.dark;
-    final bg = isDark ? Colors.black : const Color(0xFFF6F7FB);
-    final fg = isDark ? Colors.white : const Color(0xFF111111);
-    final muted = isDark ? Colors.white54 : Colors.black54;
-    final isOwnProfile = widget.userId == null || widget.userId == _currentUserId;
-
-    if (_isLoading) {
-      return Scaffold(
-        backgroundColor: bg,
-        body: Center(child: CircularProgressIndicator(color: Color(0xFFFF006E))),
-      );
-    }
-
-    return Scaffold(
-      backgroundColor: bg,
-      appBar: AppBar(
-        backgroundColor: bg,
-        elevation: 0,
-        leading: Navigator.canPop(context)
-            ? IconButton(
-                icon: Icon(Icons.arrow_back, color: fg),
-                onPressed: () => Navigator.pop(context),
-              )
-            : null,
-        title: Text(
-          _profileTitle,
-          style: TextStyle(color: fg, fontWeight: FontWeight.w700),
-        ),
-        centerTitle: true,
-        actions: [
-          if (isOwnProfile)
-            PopupMenuButton<String>(
-              icon: Icon(Icons.more_vert, color: fg),
-              color: isDark ? const Color(0xFF1A1A2E) : Colors.white,
-              onSelected: (value) async {
-                if (value == 'about') {
-                  _showAboutSheet();
-                } else if (value == 'settings') {
-                  Navigator.push(
-                    context,
-                    MaterialPageRoute(builder: (_) => const SettingsScreen()),
-                  );
-                } else if (value == 'logout') {
-                  _logout();
-                }
-              },
-              itemBuilder: (context) => const [
-                PopupMenuItem(
-                  value: 'about',
-                  child: Row(
-                    children: [
-                      Icon(Icons.info_outline, color: Colors.white70, size: 20),
-                      SizedBox(width: 8),
-                      Text('About this account', style: TextStyle(color: Colors.white)),
-                    ],
-                  ),
-                ),
-                PopupMenuItem(
-                  value: 'settings',
-                  child: Row(
-                    children: [
-                      Icon(Icons.settings, color: Colors.white70, size: 20),
-                      SizedBox(width: 8),
-                      Text('Settings', style: TextStyle(color: Colors.white)),
-                    ],
-                  ),
-                ),
-                PopupMenuItem(
-                  value: 'logout',
-                  child: Row(
-                    children: [
-                      Icon(Icons.logout, color: Color(0xFFFF006E), size: 20),
-                      SizedBox(width: 8),
-                      Text('Logout', style: TextStyle(color: Color(0xFFFF006E))),
-                    ],
-                  ),
-                ),
-              ],
-            ),
-        ],
-      ),
-      body: SingleChildScrollView(
-        child: Column(
-          children: [
-            const SizedBox(height: 12),
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 16),
-              child: Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  GestureDetector(
-                    onTap: _showProfilePhoto,
-                    child: Hero(
-                      tag: 'profile_${_user?['id']}',
-                      child: CircleAvatar(
-                        radius: 38,
-                        backgroundColor: const Color(0xFFFF006E),
-                        backgroundImage: _profilePhotoUrl.isNotEmpty
-                            ? NetworkImage(_profilePhotoUrl)
-                            : null,
-                        child: _profilePhotoUrl.isEmpty
-                            ? Text(
-                                _profileInitial,
-                                style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 28),
-                              )
-                            : null,
-                      ),
-                    ),
-                  ),
-                  const SizedBox(width: 14),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          _profileTitle,
-                          style: TextStyle(color: fg, fontSize: 22, fontWeight: FontWeight.w800),
-                        ),
-                        const SizedBox(height: 4),
-                        Text(
-                          _profileDisplayName(),
-                          style: TextStyle(color: muted, fontSize: 14),
-                        ),
-                      ],
-                    ),
-                  ),
-                ],
-              ),
-            ),
-            const SizedBox(height: 12),
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 16),
-              child: Align(
-                alignment: Alignment.centerLeft,
-                child: Text(
-                  _user?['bio'] == null || _user!['bio'].toString().isEmpty ? 'No bio yet' : _user!['bio'].toString(),
-                  style: TextStyle(color: muted, fontSize: 14),
-                ),
-              ),
-            ),
-            _buildProfileMeta(),
-            const SizedBox(height: 14),
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 16),
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.spaceAround,
-                children: [
-                  _buildStat('${_userVideos.length}', 'Posts'),
-                  _buildStat('$_followersCount', 'Followers'),
-                  _buildStat('$_followingCount', 'Following'),
-                ],
-              ),
-            ),
-            const SizedBox(height: 14),
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 16),
-              child: Row(
-                children: [
-                  Expanded(
-                    child: ElevatedButton(
-                      onPressed: isOwnProfile
-                          ? () async {
-                              final result = await Navigator.push(
-                                context,
-                                MaterialPageRoute(builder: (_) => EditProfileScreen(user: _user!)),
-                              );
-                              if (result == true) _loadProfile();
-                            }
-                          : _toggleFollow,
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: isOwnProfile
-                            ? Colors.white12
-                            : (_isFollowing ? Colors.white12 : const Color(0xFFFF006E)),
-                        foregroundColor: Colors.white,
-                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-                      ),
-                      child: Text(isOwnProfile ? 'Edit Profile' : (_isFollowing ? 'Following' : 'Follow')),
-                    ),
-                  ),
-                  const SizedBox(width: 10),
-                  Expanded(
-                    child: OutlinedButton(
-                      onPressed: _shareProfile,
-                      style: OutlinedButton.styleFrom(
-                        side: const BorderSide(color: Colors.white24),
-                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-                      ),
-                      child: const Text('Share Profile', style: TextStyle(color: Colors.white)),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-            _buildGamificationSection(),
-            const Divider(color: Colors.white10, thickness: 0.6),
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 16),
-              child: Row(
-                children: [
-                  Expanded(child: _buildTabButton('Posts', 0)),
-                  const SizedBox(width: 10),
-                  Expanded(child: _buildTabButton('Reposts', 1)),
-                ],
-              ),
-            ),
-            const SizedBox(height: 12),
-            Padding(
-              padding: const EdgeInsets.fromLTRB(16, 0, 16, 10),
-              child: Align(
-                alignment: Alignment.centerLeft,
-                child: Text(
-                  _selectedTab == 0 ? 'Posted Videos' : 'Reposted Videos',
-                  style: TextStyle(color: fg, fontSize: 16, fontWeight: FontWeight.w700),
-                ),
-              ),
-            ),
-            _buildVideosGrid(_selectedTab == 0 ? _userVideos : _repostedVideos),
-            const SizedBox(height: 20),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildVideosGrid(List<dynamic> videos) {
-    if (videos.isEmpty) {
-      return Padding(
-        padding: const EdgeInsets.only(top: 50),
-        child: Column(
-          children: [
-            Icon(Icons.video_library_outlined, size: 60, color: Colors.white10),
-            const SizedBox(height: 12),
-            Text(_selectedTab == 0 ? 'No videos yet' : 'No reposts yet', style: TextStyle(color: Colors.grey[700])),
-          ],
-        ),
-      );
-    }
-
-    return GridView.builder(
-      shrinkWrap: true,
-      physics: const NeverScrollableScrollPhysics(),
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-      gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-        crossAxisCount: 3,
-        mainAxisSpacing: 2,
-        crossAxisSpacing: 2,
-        childAspectRatio: 1,
-      ),
-      itemCount: videos.length,
-      itemBuilder: (context, index) {
-        final item = videos[index] as Map<String, dynamic>;
-        final previewUrl = _videoPreviewUrl(item);
-        return GestureDetector(
-          onTap: () {
-            Navigator.push(
-              context,
-              MaterialPageRoute(
-                builder: (_) => FullscreenFeedScreen(
-                  videos: videos,
-                  initialIndex: index,
-                  currentUser: _user,
-                ),
-              ),
-            );
-          },
-          child: Container(
-            decoration: BoxDecoration(
-              color: Colors.white.withValues(alpha: 0.04),
-              borderRadius: BorderRadius.circular(12),
-            ),
-            child: Stack(
-              fit: StackFit.expand,
-              children: [
-                ClipRRect(
-                  borderRadius: BorderRadius.circular(12),
-                  child: previewUrl.isNotEmpty
-                      ? Image.network(
-                          previewUrl,
-                          fit: BoxFit.cover,
-                          errorBuilder: (_, __, ___) => Container(color: Colors.white10),
-                        )
-                      : Container(color: Colors.white10),
-                ),
-                Container(
-                  decoration: BoxDecoration(
-                    borderRadius: BorderRadius.circular(12),
-                    gradient: LinearGradient(
-                      begin: Alignment.topCenter,
-                      end: Alignment.bottomCenter,
-                      colors: [
-                        Colors.black.withValues(alpha: 0.05),
-                        Colors.black.withValues(alpha: 0.55),
-                      ],
-                    ),
-                  ),
-                ),
-                const Center(
-                  child: Icon(Icons.play_arrow_rounded, color: Colors.white70, size: 38),
-                ),
-                Positioned(
-                  bottom: 6,
-                  left: 6,
-                  right: 6,
-                  child: Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      Row(
-                        children: [
-                          const Icon(Icons.play_arrow_outlined, color: Colors.white, size: 11),
-                          const SizedBox(width: 2),
-                          Text(
-                            '${item['views'] ?? 0}',
-                            style: const TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.w700),
-                          ),
-                        ],
-                      ),
-                      Row(
-                        children: [
-                          const Icon(Icons.repeat_rounded, color: Colors.white, size: 11),
-                          const SizedBox(width: 2),
-                          Text(
-                            '${item['repostsCount'] ?? 0}',
-                            style: const TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.w700),
-                          ),
-                        ],
-                      ),
-                    ],
-                  ),
-                ),
-              ],
-            ),
-          ),
-        );
-      },
-    );
-  }
-
-  Widget _buildStat(String count, String label) {
-    final isDark = Theme.of(context).brightness == Brightness.dark;
-    return Column(
-      children: [
-        Text(
-          count,
-          style: TextStyle(
-            color: isDark ? Colors.white : const Color(0xFF111111),
-            fontSize: 24,
-            fontWeight: FontWeight.w800,
-          ),
-        ),
-        const SizedBox(height: 2),
-        Text(
-          label,
-          style: TextStyle(color: isDark ? Colors.grey[600] : Colors.black54, fontSize: 13),
-        ),
-      ],
-    );
-  }
-
-  Widget _buildTabButton(String label, int index) {
-    final isDark = Theme.of(context).brightness == Brightness.dark;
-    final isActive = _selectedTab == index;
-    return GestureDetector(
-      onTap: () => setState(() => _selectedTab = index),
-      child: Container(
-        padding: const EdgeInsets.symmetric(vertical: 10),
-        decoration: BoxDecoration(
-          color: isActive
-              ? const Color(0xFFFF006E).withValues(alpha: 0.18)
-              : (isDark ? Colors.white10 : Colors.black.withValues(alpha: 0.05)),
-          borderRadius: BorderRadius.circular(12),
-          border: Border.all(
-            color: isActive ? const Color(0xFFFF006E) : (isDark ? Colors.white12 : Colors.black12),
-          ),
-        ),
-        child: Center(
-          child: Text(
-            label,
-            style: TextStyle(
-              color: isActive ? (isDark ? Colors.white : const Color(0xFF111111)) : (isDark ? Colors.white54 : Colors.black54),
-              fontWeight: FontWeight.w700,
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-
-  Widget _buildGamificationSection() {
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 14, 16, 12),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.transparent,
+      isScrollControlled: true,
+      builder: (context) => SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.only(bottom: 24),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
             children: [
-              Expanded(
-                child: TZPointsWidget(
-                  points: _tzPoints,
-                  onTap: _openRewards,
-                  compact: true,
-                ),
+              ShareableProfileCard(
+                username: _profileUsername(fallback: ''),
+                displayName: _profileDisplayName(),
+                profilePicUrl: _profilePhotoUrl,
+                postsCount: _userVideos.length,
+                followersCount: _followersCount,
+                tzPoints: _tzPoints,
               ),
-              const SizedBox(width: 10),
-              Expanded(
-                child: Align(
-                  alignment: Alignment.centerRight,
-                  child: StreakWidget(days: _streakDays, compact: true),
-                ),
+              const SizedBox(height: 16),
+              FloatingActionButton.extended(
+                onPressed: () => Navigator.pop(context),
+                backgroundColor: const Color(0xFFFF006E),
+                label: const Text('Close', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+                icon: const Icon(Icons.close, color: Colors.white),
               ),
             ],
           ),
-          const SizedBox(height: 10),
-          SizedBox(
-            height: 42,
-            child: ListView.separated(
-              scrollDirection: Axis.horizontal,
-              itemBuilder: (_, index) => BadgeWidget(
-                icon: Icons.verified,
-                label: _badges[index],
-              ),
-              separatorBuilder: (_, __) => const SizedBox(width: 8),
-              itemCount: _badges.length,
-            ),
-          ),
-          if (_badges.isEmpty)
-            Padding(
-              padding: const EdgeInsets.only(top: 4),
-              child: Text(
-                'Badges unlock as you keep logging in, watching, and contributing.',
-                style: TextStyle(color: Colors.grey[600], fontSize: 12),
-              ),
-            ),
-        ],
+        ),
       ),
     );
   }
@@ -591,17 +186,6 @@ class _ProfileScreenState extends State<ProfileScreen> {
       return value.map((item) => item.toString()).where((item) => item.isNotEmpty).toList();
     }
     return const [];
-  }
-
-  String _videoPreviewUrl(Map<String, dynamic> video) {
-    final thumbnail = (video['thumbnailUrl'] ?? '').toString();
-    if (thumbnail.isNotEmpty) return thumbnail;
-
-    final videoUrl = (video['videoUrl'] ?? '').toString();
-    if (videoUrl.contains('cloudinary.com') && videoUrl.contains('/video/upload/')) {
-      return videoUrl.replaceFirst('/video/upload/', '/video/upload/so_1,q_auto,f_jpg/');
-    }
-    return '';
   }
 
   Widget _buildAboutCard() {
@@ -919,6 +503,145 @@ class _ProfileScreenState extends State<ProfileScreen> {
           ),
         ),
       ],
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final bg = isDark ? Colors.black : const Color(0xFFF6F7FB);
+    final fg = isDark ? Colors.white : const Color(0xFF111111);
+    final isOwnProfile = widget.userId == null || widget.userId == _currentUserId;
+
+    if (_isLoading) {
+      return Scaffold(
+        backgroundColor: bg,
+        body: Center(child: CircularProgressIndicator(color: Color(0xFFFF006E))),
+      );
+    }
+
+    // Calculate total likes and views for Creator Insights
+    int totalViews = 0;
+    int totalLikes = 0;
+    for (var video in _userVideos) {
+      totalViews += _readInt(video['views'], 0);
+      totalLikes += _readInt(video['likesCount'], 0);
+    }
+
+    return Scaffold(
+      backgroundColor: bg,
+      extendBodyBehindAppBar: true,
+      appBar: AppBar(
+        backgroundColor: Colors.transparent,
+        elevation: 0,
+        leading: Navigator.canPop(context)
+            ? IconButton(
+                icon: Icon(Icons.arrow_back, color: isDark ? Colors.white : Colors.black87),
+                onPressed: () => Navigator.pop(context),
+              )
+            : null,
+        actions: [
+          if (isOwnProfile)
+            PopupMenuButton<String>(
+              icon: Icon(Icons.more_vert, color: isDark ? Colors.white : Colors.black87),
+              color: isDark ? const Color(0xFF1A1A2E) : Colors.white,
+              onSelected: (value) async {
+                if (value == 'about') _showAboutSheet();
+                else if (value == 'settings') Navigator.push(context, MaterialPageRoute(builder: (_) => const SettingsScreen()));
+                else if (value == 'logout') _logout();
+              },
+              itemBuilder: (context) => const [
+                PopupMenuItem(value: 'about', child: Row(children: [Icon(Icons.info_outline, color: Colors.white70, size: 20), SizedBox(width: 8), Text('About this account', style: TextStyle(color: Colors.white))])),
+                PopupMenuItem(value: 'settings', child: Row(children: [Icon(Icons.settings, color: Colors.white70, size: 20), SizedBox(width: 8), Text('Settings', style: TextStyle(color: Colors.white))])),
+                PopupMenuItem(value: 'logout', child: Row(children: [Icon(Icons.logout, color: Color(0xFFFF006E), size: 20), SizedBox(width: 8), Text('Logout', style: TextStyle(color: Color(0xFFFF006E)))])),
+              ],
+            ),
+        ],
+      ),
+      body: SingleChildScrollView(
+        physics: const AlwaysScrollableScrollPhysics(),
+        child: Column(
+          children: [
+            // 1. Profile Header
+            ProfileHeader(
+              username: _profileUsername(fallback: ''),
+              displayName: _profileDisplayName(),
+              profilePicUrl: _profilePhotoUrl,
+              bio: (_user?['bio'] ?? '').toString(),
+              tzPoints: _tzPoints,
+              onRewardsTap: _openRewards,
+              onPhotoTap: _showProfilePhoto,
+            ),
+            
+            // 2. Stats Section
+            StatsSection(
+              postsCount: _userVideos.length,
+              followersCount: _followersCount,
+              followingCount: _followingCount,
+            ),
+
+            // 3. Action Buttons
+            ActionButtons(
+              isOwnProfile: isOwnProfile,
+              isFollowing: _isFollowing,
+              onPrimaryTap: isOwnProfile
+                  ? () async {
+                      final result = await Navigator.push(context, MaterialPageRoute(builder: (_) => EditProfileScreen(user: _user!)));
+                      if (result == true) _loadProfile();
+                    }
+                  : _toggleFollow,
+              onShareTap: _shareProfile,
+            ),
+
+            const SizedBox(height: 16),
+            
+            // Profile Meta (Links)
+            _buildProfileMeta(),
+            
+            const SizedBox(height: 16),
+
+            // 4. Creator Insights
+            if (isOwnProfile && _userVideos.isNotEmpty)
+              CreatorInsights(totalLikes: totalLikes, totalViews: totalViews),
+
+            const SizedBox(height: 16),
+
+            // 5. Streak Widget
+            ProfileStreakWidget(streakDays: _streakDays),
+
+            const SizedBox(height: 24),
+
+            // 6. Tabs
+            ProfileTabs(
+              selectedIndex: _selectedTab,
+              onTabChanged: (index) => setState(() => _selectedTab = index),
+            ),
+            
+            const SizedBox(height: 16),
+
+            // 7. Video Grid
+            ProfileVideoGrid(
+              videos: _selectedTab == 0 ? _userVideos : _repostedVideos,
+              isPostsTab: _selectedTab == 0,
+              currentUser: _user,
+              onVideoTap: (index) {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (_) => FullscreenFeedScreen(
+                      videos: _selectedTab == 0 ? _userVideos : _repostedVideos,
+                      initialIndex: index,
+                      currentUser: _user,
+                    ),
+                  ),
+                );
+              },
+            ),
+            
+            const SizedBox(height: 40),
+          ],
+        ),
+      ),
     );
   }
 }

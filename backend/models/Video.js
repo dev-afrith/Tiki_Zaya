@@ -78,4 +78,11 @@ const videoSchema = new mongoose.Schema({
   timestamps: true 
 });
 
+// ─── Indexes for query optimization ───
+videoSchema.index({ isArchived: 1, createdAt: -1 });           // Feed query
+videoSchema.index({ userId: 1, isArchived: 1, createdAt: -1 }); // User profile videos
+videoSchema.index({ hashtags: 1 });                             // Hashtag search
+videoSchema.index({ views: -1 });                               // Trending / discovery sort
+videoSchema.index({ likesCount: -1 });                          // Engagement-based queries
+
 module.exports = mongoose.model('Video', videoSchema);

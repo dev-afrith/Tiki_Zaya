@@ -4,12 +4,125 @@ const cloudinary = require('cloudinary').v2;
 const User = require('../models/User');
 const { createAndEmitNotification } = require('../utils/notifications');
 const { buildGamificationSummary, ensureGamificationState } = require('../utils/gamification');
+const { generateSignedUploadParams, isValidCloudinaryUrl } = require('../services/cloudinaryService');
+const notificationQueue = require('../services/notificationQueue');
 
 cloudinary.config({
   cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
   api_key: process.env.CLOUDINARY_API_KEY,
   api_secret: process.env.CLOUDINARY_API_SECRET,
 });
+
+// ─── DIRECT UPLOAD: Step 1 — Generate signed params ─────────────
+exports.signUpload = async (req, res) => {
+  try {
+    const params = generateSignedUploadParams({ folder: 'tikizaya' });
+    return res.status(200).json(params);
+  } catch (error) {
+    console.error('[SIGN UPLOAD ERROR]', error.message);
+    return res.status(500).json({ message: 'Failed to generate upload signature' });
+  }
+};
+
+// ─── DIRECT UPLOAD: Step 2 — Register video after client upload ──
+exports.registerUpload = async (req, res) => {
+  try {
+    const { videoUrl, caption, hashtags, mentions, thumbnailUrl, editingMetadata, videoDurationSeconds } = req.body;
+
+    if (!videoUrl || !isValidCloudinaryUrl(videoUrl)) {
+      return res.status(400).json({ message: 'Invalid or missing Cloudinary video URL' });
+    }
+
+    const parsedDuration = Number(videoDurationSeconds);
+    if (Number.isFinite(parsedDuration) && parsedDuration > 90) {
+      return res.status(400).json({ message: 'Video must be 90 seconds or less' });
+    }
+
+    const processArray = (input) => {
+      if (!input) return [];
+      if (Array.isArray(input)) return input;
+      return input.split(',').map(s => s.trim()).filter(s => s.length > 0);
+    };
+
+    let parsedMetadata = {};
+    if (editingMetadata) {
+      try {
+        parsedMetadata = typeof editingMetadata === 'string' ? JSON.parse(editingMetadata) : editingMetadata;
+      } catch (e) {
+        console.warn('Failed to parse editingMetadata:', e);
+      }
+    }
+
+    const video = new Video({
+      userId: req.userId,
+      videoUrl,
+      description: caption || '',
+      caption: caption || '',
+      hashtags: processArray(hashtags),
+      mentions: processArray(mentions),
+      thumbnailUrl: thumbnailUrl || '',
+      editingMetadata: parsedMetadata,
+      likesCount: 0,
+      viewsCount: 0,
+      views: 0,
+      sharesCount: 0,
+      commentsCount: 0,
+      videoDurationSeconds: Number.isFinite(parsedDuration) ? parsedDuration : undefined,
+    });
+
+    await video.save();
+
+    // Gamification
+    const author = await User.findById(req.userId).select('username followers gamification');
+    if (author) {
+      const gamification = ensureGamificationState(author);
+      gamification.uploadsTotal = Number(gamification.uploadsTotal || 0) + 1;
+      await author.save();
+      req.app.get('io')?.to(req.userId).emit('gamification_updated', {
+        user: author,
+        gamification: buildGamificationSummary(author),
+      });
+    }
+
+    // Notify followers via background queue (instant API response)
+    if (author && Array.isArray(author.followers) && author.followers.length > 0) {
+      const queued = await notificationQueue.queueFollowerNotifications({
+        authorId: req.userId,
+        authorUsername: author.username || 'Someone',
+        videoId: video._id.toString(),
+        followerIds: author.followers.map(String),
+      });
+
+      // Fallback to inline if queue is unavailable
+      if (!queued) {
+        const io = req.app.get('io');
+        for (const followerId of author.followers) {
+          await createAndEmitNotification(io, {
+            userId: followerId,
+            actorUserId: req.userId,
+            type: 'post',
+            title: 'New post',
+            body: `${author.username || 'Someone'} has posted a new video`,
+            entityType: 'video',
+            entityId: video._id,
+          });
+        }
+      }
+    }
+
+    // Invalidate feed cache if Redis is available
+    try {
+      const redis = require('../services/redisService');
+      if (redis.isReady()) await redis.invalidateFeedCache();
+    } catch (_) {}
+
+    console.log('[REGISTER UPLOAD] Video registered successfully');
+    return res.status(201).json({ message: 'Video registered successfully', video });
+  } catch (error) {
+    console.error('[REGISTER UPLOAD ERROR]', error.message);
+    return res.status(500).json({ error: error.message });
+  }
+};
 
 // Upload video
 exports.uploadVideo = async (req, res) => {
@@ -97,18 +210,28 @@ exports.uploadVideo = async (req, res) => {
         gamification: buildGamificationSummary(author),
       });
     }
+    // Notify followers via background queue
     if (author && Array.isArray(author.followers) && author.followers.length > 0) {
-      const io = req.app.get('io');
-      for (const followerId of author.followers) {
-        await createAndEmitNotification(io, {
-          userId: followerId,
-          actorUserId: req.userId,
-          type: 'post',
-          title: 'New post',
-          body: `${author.username || 'Someone'} has posted a new video`,
-          entityType: 'video',
-          entityId: video._id,
-        });
+      const queued = await notificationQueue.queueFollowerNotifications({
+        authorId: req.userId,
+        authorUsername: author.username || 'Someone',
+        videoId: video._id.toString(),
+        followerIds: author.followers.map(String),
+      });
+
+      if (!queued) {
+        const io = req.app.get('io');
+        for (const followerId of author.followers) {
+          await createAndEmitNotification(io, {
+            userId: followerId,
+            actorUserId: req.userId,
+            type: 'post',
+            title: 'New post',
+            body: `${author.username || 'Someone'} has posted a new video`,
+            entityType: 'video',
+            entityId: video._id,
+          });
+        }
       }
     }
 
@@ -126,47 +249,52 @@ exports.uploadVideo = async (req, res) => {
   }
 };
 
-// Get feed videos (paginated with Smart Ranking)
+// Get feed videos (paginated with Smart Ranking + Redis cache)
 exports.getFeed = async (req, res) => {
   try {
+    const redis = require('../services/redisService');
     const page = parseInt(req.query.page) || 1;
     const limit = parseInt(req.query.limit) || 10;
+    const cacheKey = `feed:p${page}:l${limit}`;
+
+    // ── Check Redis cache first ──
+    if (redis.isReady()) {
+      const cached = await redis.getJSON(cacheKey);
+      if (cached) {
+        return res.status(200).json(cached);
+      }
+    }
+
     const skip = (page - 1) * limit;
 
     const videos = await Video.aggregate([
       { $match: { isArchived: { $ne: true } } },
-      // 1. Calculate weighted scores
       {
         $addFields: {
           likesCount: { $size: "$likes" },
           favoritesCount: { $size: "$favorites" },
           viewsCount: { $ifNull: ["$viewsCount", "$views"] },
-          // Time factor: closer to 0 means newer
           hoursSinceUpload: {
             $divide: [
               { $subtract: [new Date(), "$createdAt"] },
-              3600000 // ms to hours
+              3600000
             ]
           }
         }
       },
       {
         $addFields: {
-          // Smart Score: Higher is better. 
-          // Popularity weight + freshness boost
           recommendationScore: {
             $divide: [
               { $add: [{ $multiply: ["$likesCount", 2] }, { $multiply: ["$favoritesCount", 3] }, 1] },
-              { $add: ["$hoursSinceUpload", 1] } 
+              { $add: ["$hoursSinceUpload", 1] }
             ]
           }
         }
       },
-      // 2. Sort by the calculated score
       { $sort: { recommendationScore: -1 } },
       { $skip: skip },
       { $limit: limit },
-      // 3. Populate user data
       {
         $lookup: {
           from: 'users',
@@ -176,7 +304,6 @@ exports.getFeed = async (req, res) => {
         }
       },
       { $unwind: '$userId' },
-      // 4. Project and clean
       {
         $project: {
           'userId.email': 0,
@@ -184,7 +311,11 @@ exports.getFeed = async (req, res) => {
           'userId.isPrivate': 0,
           'userId.followers': 0,
           'userId.following': 0,
-          'userId.updatedAt': 0
+          'userId.updatedAt': 0,
+          'userId.passwordHash': 0,
+          'userId.refreshTokens': 0,
+          'userId.passwordReset': 0,
+          'userId.fcmTokens': 0,
         }
       }
     ]);
@@ -198,14 +329,21 @@ exports.getFeed = async (req, res) => {
       return v;
     });
 
-    const total = await Video.countDocuments();
+    const total = await Video.countDocuments({ isArchived: { $ne: true } });
 
-    res.status(200).json({
+    const responseData = {
       videos: optimizedVideos,
       currentPage: page,
       totalPages: Math.ceil(total / limit),
       totalVideos: total,
-    });
+    };
+
+    // ── Cache the result (90 second TTL) ──
+    if (redis.isReady()) {
+      await redis.setJSON(cacheKey, responseData, 90);
+    }
+
+    res.status(200).json(responseData);
   } catch (error) {
     console.error('[FEED ERROR]', error);
     res.status(500).json({ error: error.message });
@@ -226,33 +364,52 @@ exports.getUserVideos = async (req, res) => {
 // Like / Unlike video
 exports.toggleLike = async (req, res) => {
   try {
-    const video = await Video.findById(req.params.id);
+    const videoId = req.params.id;
+    const userId = req.userId;
+
+    const video = await Video.findById(videoId).select('likes userId');
     if (!video) return res.status(404).json({ message: 'Video not found' });
 
-    const actor = await User.findById(req.userId).select('username profilePic');
+    const isLiked = video.likes.includes(userId);
+    let updatedLikesCount;
 
-    const index = video.likes.indexOf(req.userId);
-    if (index === -1) {
-      video.likes.push(req.userId);
+    if (isLiked) {
+      const updated = await Video.findByIdAndUpdate(
+        videoId,
+        { $pull: { likes: userId }, $inc: { likesCount: -1 } },
+        { new: true, select: 'likesCount' }
+      );
+      updatedLikesCount = updated.likesCount;
     } else {
-      video.likes.splice(index, 1);
-    }
-    video.likesCount = video.likes.length;
-    await video.save();
+      const updated = await Video.findByIdAndUpdate(
+        videoId,
+        { $addToSet: { likes: userId }, $inc: { likesCount: 1 } },
+        { new: true, select: 'likesCount' }
+      );
+      updatedLikesCount = updated.likesCount;
 
-    if (index === -1 && actor) {
-      await createAndEmitNotification(req.app.get('io'), {
-        userId: video.userId,
-        actorUserId: req.userId,
-        type: 'like',
-        title: 'New like',
-        body: `${actor.username || 'Someone'} liked your reel`,
-        entityType: 'video',
-        entityId: video._id,
+      // Offload notification to background to prevent blocking
+      process.nextTick(async () => {
+        try {
+          const actor = await User.findById(userId).select('username');
+          if (actor) {
+            await createAndEmitNotification(req.app.get('io'), {
+              userId: video.userId,
+              actorUserId: userId,
+              type: 'like',
+              title: 'New like',
+              body: `${actor.username || 'Someone'} liked your reel`,
+              entityType: 'video',
+              entityId: video._id,
+            });
+          }
+        } catch (e) {
+          console.error('Background notification error:', e);
+        }
       });
     }
 
-    res.status(200).json({ likes: video.likes.length, likesCount: video.likes.length, liked: index === -1 });
+    res.status(200).json({ success: true, likesCount: updatedLikesCount, liked: !isLiked });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
@@ -299,21 +456,28 @@ exports.incrementShare = async (req, res) => {
     const video = await Video.findByIdAndUpdate(
       req.params.id,
       { $inc: { sharesCount: 1 } },
-      { new: true }
+      { new: true, select: 'sharesCount' }
     );
     if (!video) return res.status(404).json({ message: 'Video not found' });
-    res.status(200).json({ sharesCount: video.sharesCount });
+    res.status(200).json({ success: true, sharesCount: video.sharesCount });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
 };
 
-// Get discovery page data (trending tags, suggested users, top videos)
+// Get discovery page data (trending tags, suggested users, top videos) + Redis cache
 exports.getDiscoveryData = async (req, res) => {
   try {
+    const redis = require('../services/redisService');
+
+    // ── Check cache ──
+    if (redis.isReady()) {
+      const cached = await redis.getJSON('discovery');
+      if (cached) return res.status(200).json(cached);
+    }
+
     const User = require('../models/User');
 
-    // 1. Get Trending Hashtags (Agregated from all video hashtags)
     const trendingTags = await Video.aggregate([
       { $match: { isArchived: { $ne: true } } },
       { $unwind: "$hashtags" },
@@ -322,7 +486,6 @@ exports.getDiscoveryData = async (req, res) => {
       { $limit: 10 }
     ]);
 
-    // 2. Get Recommended Creators (Top followed users)
     const recommendedCreators = await User.aggregate([
       { $addFields: { followersCount: { $size: "$followers" } } },
       { $sort: { followersCount: -1 } },
@@ -330,18 +493,24 @@ exports.getDiscoveryData = async (req, res) => {
       { $project: { username: 1, profilePic: 1, followersCount: 1, bio: 1 } }
     ]);
 
-    // 3. Get Trending Videos (Highest views)
     const trendingVideos = await Video.find()
       .where('isArchived').ne(true)
       .sort({ views: -1 })
       .limit(9)
       .populate('userId', 'username profilePic');
 
-    res.status(200).json({
+    const responseData = {
       hashtags: trendingTags.map(t => `#${t._id}`),
       creators: recommendedCreators,
       videos: trendingVideos
-    });
+    };
+
+    // ── Cache (120 second TTL) ──
+    if (redis.isReady()) {
+      await redis.setJSON('discovery', responseData, 120);
+    }
+
+    res.status(200).json(responseData);
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
@@ -433,6 +602,9 @@ exports.archiveVideo = async (req, res) => {
     video.archivedAt = new Date();
     await video.save();
 
+    // Invalidate feed cache
+    try { const redis = require('../services/redisService'); if (redis.isReady()) await redis.invalidateFeedCache(); } catch (_) {}
+
     return res.status(200).json({ ok: true, isArchived: true });
   } catch (error) {
     return res.status(500).json({ error: error.message });
@@ -478,6 +650,9 @@ exports.deleteVideo = async (req, res) => {
     await Video.findByIdAndDelete(req.params.id);
     const Comment = require('../models/Comment');
     await Comment.deleteMany({ videoId: req.params.id });
+
+    // Invalidate feed cache
+    try { const redis = require('../services/redisService'); if (redis.isReady()) await redis.invalidateFeedCache(); } catch (_) {}
 
     return res.status(200).json({ ok: true });
   } catch (error) {

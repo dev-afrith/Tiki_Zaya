@@ -10,8 +10,13 @@ const Message = require('./models/Message');
 const authMiddleware = require('./middleware/auth');
 const { startBirthdayScheduler } = require('./utils/birthdayScheduler');
 const { initStreakScheduler } = require('./utils/streakScheduler');
+const initSmartNotifications = require('./cron/smartNotifications');
+const redis = require('./services/redisService');
 
 dotenv.config();
+
+// Initialize Redis (non-blocking — app works without it)
+redis.init();
 
 process.on('unhandledRejection', (reason, promise) => {
   console.error('Unhandled Rejection at:', promise, 'reason:', reason);
@@ -54,6 +59,9 @@ const io = new Server(server, {
 
 app.set('io', io);
 
+// Expose IO globally for background workers (BullMQ)
+global.__tikizaya_io = io;
+
 // Middleware
 app.use(helmet());
 app.use(cors(corsOptions));
@@ -79,6 +87,7 @@ const gamificationRoutes = require('./routes/gamification');
 const messageRoutes = require('./routes/messages');
 const notificationRoutes = require('./routes/notifications');
 const streakRoutes = require('./routes/streaks');
+const shareRoutes = require('./routes/shareRoutes');
 
 app.get('/api/health', (req, res) => {
   res.status(200).json({ status: 'ok', message: 'Tiki Zaya API is running!' });
@@ -96,6 +105,7 @@ app.use('/api/gamification', gamificationRoutes);
 app.use('/api/messages', messageRoutes);
 app.use('/api/notifications', notificationRoutes);
 app.use('/api/streaks', streakRoutes);
+app.use('/v', shareRoutes);
 
 app.use((req, res) => {
   res.status(404).json({ message: 'Route not found' });
@@ -202,9 +212,17 @@ async function startServer() {
     });
     console.log('MongoDB connected');
 
+    // Initialize BullMQ notification queue + worker
+    const notificationQueue = require('./services/notificationQueue');
+    notificationQueue.init();
+    const notificationWorker = require('./workers/notificationWorker');
+    notificationWorker.start();
+
     server.listen(PORT, () => {
       console.log('Server is running on port ' + PORT);
       startBirthdayScheduler(io);
+      initStreakScheduler(io);
+      initSmartNotifications(io);
     });
   } catch (err) {
     console.error('MongoDB connection failed:', err.message);

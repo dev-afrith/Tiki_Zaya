@@ -15,13 +15,13 @@ const sendFcmPush = async (userId, payload) => {
     const message = {
       tokens: validTokens,
       notification: {
-        title: payload.title || 'Tiki Zaya',
-        body: payload.body || 'You have a new notification',
+        title: 'Tiki Zaya',
+        body: payload.message || 'You have a new notification',
       },
       data: {
         type: payload.type || '',
-        entityId: payload.entityId || '',
-        actorUserId: payload.actorUserId || '',
+        videoId: payload.videoId || '',
+        senderId: payload.senderId || '',
         click_action: 'FLUTTER_NOTIFICATION_CLICK',
       },
     };
@@ -49,21 +49,19 @@ const sendFcmPush = async (userId, payload) => {
 };
 
 const buildPayload = async (notification) => {
-  const actor = notification.actorUserId && notification.actorUserId !== 'system'
-    ? await User.findById(notification.actorUserId).select('username profilePic')
+  const actor = notification.senderId && notification.senderId !== 'system'
+    ? await User.findById(notification.senderId).select('username profilePic')
     : null;
 
   return {
     _id: notification._id,
     userId: notification.userId,
-    actorUserId: notification.actorUserId,
+    senderId: notification.senderId,
     type: notification.type,
-    title: notification.title,
-    body: notification.body,
-    entityType: notification.entityType,
-    entityId: notification.entityId,
+    message: notification.message,
+    videoId: notification.videoId,
     actor,
-    readAt: notification.readAt,
+    isRead: notification.isRead,
     createdAt: notification.createdAt,
   };
 };
@@ -75,17 +73,19 @@ exports.createAndEmitNotification = async (io, data) => {
 
   const notification = await Notification.create({
     userId: data.userId.toString(),
-    actorUserId: data.actorUserId.toString(),
+    senderId: data.actorUserId.toString(),
     type: data.type,
-    title: data.title,
-    body: data.body,
-    entityType: data.entityType || '',
-    entityId: data.entityId ? data.entityId.toString() : '',
+    message: data.body,
+    videoId: data.entityId ? data.entityId.toString() : '',
   });
 
   const payload = await buildPayload(notification);
+  
+  // Compute unread count to emit
+  const unreadCount = await Notification.countDocuments({ userId: data.userId.toString(), isRead: false });
+
   if (io) {
-    io.to(notification.userId).emit('new_notification', payload);
+    io.to(notification.userId).emit('new_notification', { notification: payload, unreadCount });
   }
 
   // Fire FCM Push
@@ -99,17 +99,18 @@ exports.createSystemNotification = async (io, data) => {
 
   const notification = await Notification.create({
     userId: data.userId.toString(),
-    actorUserId: data.actorUserId || 'system',
+    senderId: data.actorUserId || 'system',
     type: data.type,
-    title: data.title,
-    body: data.body,
-    entityType: data.entityType || '',
-    entityId: data.entityId ? data.entityId.toString() : '',
+    message: data.body,
+    videoId: data.entityId ? data.entityId.toString() : '',
   });
 
   const payload = await buildPayload(notification);
+  
+  const unreadCount = await Notification.countDocuments({ userId: data.userId.toString(), isRead: false });
+
   if (io) {
-    io.to(notification.userId).emit('new_notification', payload);
+    io.to(notification.userId).emit('new_notification', { notification: payload, unreadCount });
   }
 
   // Fire FCM Push

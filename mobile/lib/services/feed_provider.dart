@@ -51,6 +51,18 @@ class FeedProvider extends ChangeNotifier {
     }
   }
 
+  // Update video data silently without triggering a global rebuild
+  void updateVideoSilently(String videoId, Map<String, dynamic> updates) {
+    final index = _videos.indexWhere((v) => v['_id'] == videoId);
+    if (index != -1) {
+      final video = Map<String, dynamic>.from(_videos[index]);
+      updates.forEach((key, value) {
+        video[key] = value;
+      });
+      _videos[index] = video;
+    }
+  }
+
   // Optimistic UI updates
   Future<void> toggleLike(String videoId, String userId) async {
     final index = _videos.indexWhere((v) => v['_id'] == videoId);

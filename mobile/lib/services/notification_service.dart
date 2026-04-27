@@ -8,6 +8,7 @@ import 'package:mobile/screens/notifications_screen.dart';
 import 'package:mobile/screens/fullscreen_feed_screen.dart';
 import 'package:mobile/screens/chat_screen.dart';
 import 'package:mobile/screens/profile_screen.dart';
+import 'package:mobile/screens/rewards_screen.dart';
 
 @pragma('vm:entry-point')
 Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
@@ -76,21 +77,40 @@ class NotificationService {
     
     final title = message.notification?.title ?? 'Notification';
     final body = message.notification?.body ?? '';
-    
+    final isGamification = message.data['type'] == 'streak_reminder' || 
+                           message.data['type'] == 'reward_available' || 
+                           message.data['type'] == 'task_progress' ||
+                           message.data['type'] == 'system';
+
+    final bgColor = isGamification ? const Color(0xFF2A002A) : const Color(0xFF161618);
+    final borderColor = isGamification ? const Color(0xFFFF006E).withValues(alpha: 0.5) : Colors.transparent;
+
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Column(
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text(title, style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.white)),
+            Row(
+              children: [
+                if (isGamification) const Padding(
+                  padding: EdgeInsets.only(right: 8.0),
+                  child: Icon(Icons.stars_rounded, color: Color(0xFFFF006E), size: 18),
+                ),
+                Expanded(child: Text(title, style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.white))),
+              ],
+            ),
+            const SizedBox(height: 4),
             Text(body, style: const TextStyle(color: Colors.white70)),
           ],
         ),
-        backgroundColor: const Color(0xFF161618),
+        backgroundColor: bgColor,
         behavior: SnackBarBehavior.floating,
         margin: const EdgeInsets.only(bottom: 24, left: 16, right: 16),
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(16),
+          side: BorderSide(color: borderColor, width: 1),
+        ),
         elevation: 8,
         duration: const Duration(seconds: 4),
         dismissDirection: DismissDirection.horizontal,
@@ -129,6 +149,8 @@ class NotificationService {
       if (entityId != null && entityId.isNotEmpty) {
         Navigator.push(context, MaterialPageRoute(builder: (_) => ProfileScreen(userId: entityId)));
       }
+    } else if (type == 'streak_reminder' || type == 'reward_available' || type == 'task_progress' || type == 'system') {
+      Navigator.push(context, MaterialPageRoute(builder: (_) => const RewardsScreen()));
     } else if (type == 'like' || type == 'comment' || type == 'repost') {
       if (entityId != null && entityId.isNotEmpty) {
         try {

@@ -130,6 +130,8 @@ const userSchema = new mongoose.Schema({
     commentsGivenTotal: { type: Number, default: 0 },
     uploadsTotal: { type: Number, default: 0 },
     invitesTotal: { type: Number, default: 0 },
+    lastNotificationSentAt: { type: Date, default: null },
+    dailyNotificationCount: { type: Number, default: 0 },
   },
   nameChangeHistory: {
     type: [Date],
@@ -159,5 +161,9 @@ userSchema.set('toJSON', {
     return ret;
   },
 });
+
+// ─── Indexes for query optimization ───
+userSchema.index({ phone: 1 });       // Multi-account phone lookup
+userSchema.index({ username: 'text' }); // User search
 
 module.exports = mongoose.model('User', userSchema);

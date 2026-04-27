@@ -12,6 +12,10 @@ import 'package:google_fonts/google_fonts.dart';
 import 'package:provider/provider.dart';
 import 'package:mobile/services/auth_provider.dart';
 import 'package:mobile/services/feed_provider.dart';
+import 'package:mobile/services/notification_provider.dart';
+import 'package:app_links/app_links.dart';
+import 'dart:async';
+import 'package:mobile/screens/fullscreen_feed_screen.dart';
 
 final GlobalKey<NavigatorState> navigatorKey = GlobalKey<NavigatorState>();
 
@@ -45,15 +49,77 @@ void main() async {
       providers: [
         ChangeNotifierProvider(create: (_) => AuthProvider()),
         ChangeNotifierProvider(create: (_) => FeedProvider()),
+        ChangeNotifierProvider(create: (_) => NotificationProvider()),
       ],
       child: TikiZayaApp(themeController: appThemeController),
     ),
   );
 }
 
-class TikiZayaApp extends StatelessWidget {
+class TikiZayaApp extends StatefulWidget {
   final ThemeController themeController;
   const TikiZayaApp({super.key, required this.themeController});
+
+  @override
+  State<TikiZayaApp> createState() => _TikiZayaAppState();
+}
+
+class _TikiZayaAppState extends State<TikiZayaApp> {
+  late AppLinks _appLinks;
+  StreamSubscription<Uri>? _linkSubscription;
+
+  @override
+  void initState() {
+    super.initState();
+    _initDeepLinks();
+  }
+
+  @override
+  void dispose() {
+    _linkSubscription?.cancel();
+    super.dispose();
+  }
+
+  Future<void> _initDeepLinks() async {
+    _appLinks = AppLinks();
+
+    // Handle incoming links when the app is running in the background or foreground
+    _linkSubscription = _appLinks.uriLinkStream.listen((Uri? uri) {
+      if (uri != null) {
+        _handleDeepLink(uri);
+      }
+    }, onError: (err) {
+      debugPrint('AppLinks error: $err');
+    });
+  }
+
+  Future<void> _handleDeepLink(Uri uri) async {
+    // Example: https://tikizaya.com/v/123456789
+    if (uri.pathSegments.length == 2 && uri.pathSegments.first == 'v') {
+      final videoId = uri.pathSegments[1];
+      if (videoId.isNotEmpty) {
+        try {
+          // Fetch the single video by its ID
+          final videoData = await ApiService.getVideoById(videoId);
+          
+          if (navigatorKey.currentState != null) {
+            final auth = Provider.of<AuthProvider>(navigatorKey.currentContext!, listen: false);
+            navigatorKey.currentState!.push(
+              MaterialPageRoute(
+                builder: (_) => FullscreenFeedScreen(
+                  videos: [videoData], // Wrap single video in list
+                  initialIndex: 0,
+                  currentUser: auth.user,
+                ),
+              ),
+            );
+          }
+        } catch (e) {
+          debugPrint('Error handling deep link video fetch: $e');
+        }
+      }
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -108,13 +174,13 @@ class TikiZayaApp extends StatelessWidget {
     );
 
     return AnimatedBuilder(
-      animation: themeController,
+      animation: widget.themeController,
       builder: (context, _) {
         return MaterialApp(
           navigatorKey: navigatorKey,
           title: 'Tiki Zaya',
           debugShowCheckedModeBanner: false,
-          themeMode: themeController.themeMode,
+          themeMode: widget.themeController.themeMode,
           theme: lightTheme,
           darkTheme: darkTheme,
           home: const SplashRouter(),

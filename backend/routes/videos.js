@@ -3,6 +3,8 @@ const router = express.Router();
 const multer = require('multer');
 const auth = require('../middleware/auth');
 const {
+	signUpload,
+	registerUpload,
 	uploadVideo,
 	getFeed,
 	getVideoById,
@@ -39,7 +41,13 @@ const storage = multer.diskStorage({
 });
 const upload = multer({ storage, limits: { fileSize: 100 * 1024 * 1024 } }); // 100MB limit
 
+// ─── Direct upload (new fast path) ───
+router.post('/sign-upload', auth, signUpload);
+router.post('/register', auth, registerUpload);
+
+// ─── Legacy upload (kept for backward compat) ───
 router.post('/upload', auth, upload.single('video'), uploadVideo);
+
 router.get('/feed', getFeed);
 router.get('/single/:id', getVideoById);
 router.get('/discovery', getDiscoveryData);
@@ -56,3 +64,4 @@ router.put('/unarchive/:id', auth, unarchiveVideo);
 router.delete('/:id', auth, deleteVideo);
 
 module.exports = router;
+

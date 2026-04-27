@@ -365,6 +365,104 @@ class ApiService {
     return jsonDecode(response.body);
   }
 
+  // ─── Direct Cloudinary Upload (3-step fast path) ──────────────
+
+  /// Step 1: Get signed upload params from backend
+  static Future<Map<String, dynamic>?> _getUploadSignature(String token) async {
+    try {
+      final response = await http.post(
+        Uri.parse('${ApiConfig.baseUrl}/api/videos/sign-upload'),
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': 'Bearer $token',
+        },
+      );
+      if (response.statusCode == 200) {
+        return jsonDecode(response.body);
+      }
+    } catch (_) {}
+    return null;
+  }
+
+  /// Step 2: Upload directly to Cloudinary
+  static Future<String?> _uploadToCloudinary({
+    required XFile videoFile,
+    required Map<String, dynamic> signedParams,
+    Function(double)? onProgress,
+  }) async {
+    final uploadUrl = signedParams['uploadUrl']?.toString() ?? '';
+    if (uploadUrl.isEmpty) return null;
+
+    final dio.MultipartFile file;
+    if (kIsWeb) {
+      final bytes = await videoFile.readAsBytes();
+      file = dio.MultipartFile.fromBytes(
+        bytes,
+        filename: videoFile.name.isNotEmpty ? videoFile.name : 'video.mp4',
+      );
+    } else {
+      file = await dio.MultipartFile.fromFile(
+        videoFile.path,
+        filename: videoFile.name,
+      );
+    }
+
+    final formData = dio.FormData.fromMap({
+      'file': file,
+      'api_key': signedParams['apiKey'],
+      'timestamp': signedParams['timestamp'],
+      'signature': signedParams['signature'],
+      'folder': signedParams['folder'] ?? 'tikizaya',
+      'resource_type': 'video',
+    });
+
+    final response = await _dio.post(
+      uploadUrl,
+      data: formData,
+      onSendProgress: (sent, total) {
+        if (onProgress != null && total > 0) {
+          // Cloudinary upload is ~90% of total progress
+          onProgress(sent / total * 0.9);
+        }
+      },
+    );
+
+    if (response.statusCode == 200 && response.data is Map) {
+      return response.data['secure_url']?.toString();
+    }
+    return null;
+  }
+
+  /// Step 3: Register uploaded video in backend DB
+  static Future<Map<String, dynamic>> _registerVideo({
+    required String token,
+    required String videoUrl,
+    required String caption,
+    required int videoDurationSeconds,
+    List<String>? hashtags,
+    List<String>? mentions,
+    String? thumbnailUrl,
+    Map<String, dynamic>? editingMetadata,
+  }) async {
+    final response = await http.post(
+      Uri.parse('${ApiConfig.baseUrl}/api/videos/register'),
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': 'Bearer $token',
+      },
+      body: jsonEncode({
+        'videoUrl': videoUrl,
+        'caption': caption,
+        'videoDurationSeconds': videoDurationSeconds,
+        'hashtags': hashtags ?? [],
+        'mentions': mentions ?? [],
+        'thumbnailUrl': thumbnailUrl ?? '',
+        'editingMetadata': editingMetadata,
+      }),
+    );
+    return jsonDecode(response.body);
+  }
+
   static Future<Map<String, dynamic>> uploadVideoWithProgress({
     required XFile videoFile,
     required String caption,
@@ -377,11 +475,73 @@ class ApiService {
     if (token == null) {
       return {'error': 'Authentication token missing. Please try logging in again.'};
     }
-    final url = Uri.parse('${ApiConfig.baseUrl}/api/videos/upload').toString();
 
     // Parse hashtags and mentions
     final hashtags = RegExp(r'#(\w+)').allMatches(caption).map((m) => m.group(1)!).toList();
     final mentions = RegExp(r'@(\w+)').allMatches(caption).map((m) => m.group(1)!).toList();
+
+    try {
+      // ── Fast path: Direct Cloudinary upload ──
+      final signedParams = await _getUploadSignature(token);
+
+      if (signedParams != null) {
+        onProgress?.call(0.0);
+
+        final cloudinaryUrl = await _uploadToCloudinary(
+          videoFile: videoFile,
+          signedParams: signedParams,
+          onProgress: onProgress,
+        );
+
+        if (cloudinaryUrl != null && cloudinaryUrl.isNotEmpty) {
+          onProgress?.call(0.92);
+
+          final result = await _registerVideo(
+            token: token,
+            videoUrl: cloudinaryUrl,
+            caption: caption,
+            videoDurationSeconds: videoDurationSeconds,
+            hashtags: hashtags,
+            mentions: mentions,
+            thumbnailUrl: thumbnailUrl,
+            editingMetadata: editingMetadata,
+          );
+
+          onProgress?.call(1.0);
+          return result;
+        }
+      }
+
+      // ── Fallback: Legacy proxy upload ──
+      return await _legacyUpload(
+        token: token,
+        videoFile: videoFile,
+        caption: caption,
+        videoDurationSeconds: videoDurationSeconds,
+        hashtags: hashtags,
+        mentions: mentions,
+        thumbnailUrl: thumbnailUrl,
+        editingMetadata: editingMetadata,
+        onProgress: onProgress,
+      );
+    } catch (e) {
+      return {'error': 'Network error. Check your connection and try again.'};
+    }
+  }
+
+  /// Legacy proxy upload (fallback if signature fails)
+  static Future<Map<String, dynamic>> _legacyUpload({
+    required String token,
+    required XFile videoFile,
+    required String caption,
+    required int videoDurationSeconds,
+    List<String>? hashtags,
+    List<String>? mentions,
+    String? thumbnailUrl,
+    Map<String, dynamic>? editingMetadata,
+    Function(double)? onProgress,
+  }) async {
+    final url = Uri.parse('${ApiConfig.baseUrl}/api/videos/upload').toString();
 
     Future<dio.FormData> buildFormData() async {
       final dio.MultipartFile file;
@@ -401,8 +561,8 @@ class ApiService {
       return dio.FormData.fromMap({
         'caption': caption,
         'videoDurationSeconds': videoDurationSeconds,
-        'hashtags': hashtags,
-        'mentions': mentions,
+        'hashtags': hashtags ?? [],
+        'mentions': mentions ?? [],
         'thumbnailUrl': thumbnailUrl ?? '',
         'editingMetadata': editingMetadata != null ? jsonEncode(editingMetadata) : null,
         'video': file,
@@ -424,33 +584,28 @@ class ApiService {
       );
     }
 
-    try {
-      var response = await sendUpload(token);
-      var statusCode = response.statusCode ?? 0;
+    var response = await sendUpload(token);
+    var statusCode = response.statusCode ?? 0;
 
-      if (statusCode == 401) {
-        final refreshedToken = await _refreshFirebaseToken() ?? await _refreshLocalToken();
-        if (refreshedToken != null && refreshedToken != token) {
-          response = await sendUpload(refreshedToken);
-          statusCode = response.statusCode ?? 0;
-        }
+    if (statusCode == 401) {
+      final refreshedToken = await _refreshFirebaseToken() ?? await _refreshLocalToken();
+      if (refreshedToken != null && refreshedToken != token) {
+        response = await sendUpload(refreshedToken);
+        statusCode = response.statusCode ?? 0;
       }
-
-      if (statusCode >= 200 && statusCode < 300) {
-        return response.data is Map<String, dynamic>
-            ? response.data
-            : {'message': 'Upload complete'};
-      }
-
-      // Handle error status codes
-      if (statusCode == 401) {
-        return {'error': 'Session expired. Please log out and log in again.'};
-      }
-      final serverMsg = response.data is Map ? response.data['message'] : null;
-      return {'error': serverMsg ?? 'Upload failed (HTTP $statusCode)'};
-    } catch (e) {
-      return {'error': 'Network error. Check your connection and try again.'};
     }
+
+    if (statusCode >= 200 && statusCode < 300) {
+      return response.data is Map<String, dynamic>
+          ? response.data
+          : {'message': 'Upload complete'};
+    }
+
+    if (statusCode == 401) {
+      return {'error': 'Session expired. Please log out and log in again.'};
+    }
+    final serverMsg = response.data is Map ? response.data['message'] : null;
+    return {'error': serverMsg ?? 'Upload failed (HTTP $statusCode)'};
   }
 
   // ─── MESSAGES ────────────────────────────────────────
@@ -877,87 +1032,6 @@ class ApiService {
     return decoded is Map<String, dynamic> ? decoded : {'ok': false};
   }
 
-  static Future<Map<String, dynamic>> checkForUpdate() async {
-    try {
-      final PackageInfo packageInfo = await PackageInfo.fromPlatform();
-      final String localVersion = packageInfo.version;
-      print("[UPDATE CHECK] Current Version: $localVersion");
-
-      // GitHub API for latest release
-      final response = await http.get(
-        Uri.parse('https://api.github.com/repos/dev-afrith/Tiki_Zaya/releases/latest'),
-        headers: {'User-Agent': 'TikiZaya-App'},
-      );
-      
-      if (response.statusCode != 200) {
-        print("[UPDATE CHECK] Error: GitHub API returned status ${response.statusCode}");
-        return {'updateAvailable': false, 'message': 'GitHub API error: ${response.statusCode}'};
-      }
-
-      final data = jsonDecode(response.body);
-      final String latestTag = (data['tag_name'] ?? '').toString();
-      final String changelog = (data['body'] ?? '').toString();
-      
-      print("[UPDATE CHECK] Raw latest tag: $latestTag");
-
-      // Extract latest version (remove 'v' prefix)
-      final String latestVersion = latestTag.replaceAll("v", "");
-      print("[UPDATE CHECK] Parsed latest version: $latestVersion");
-      
-      if (latestVersion.isEmpty) {
-        print("[UPDATE CHECK] Error: Could not parse version from tag");
-        return {'updateAvailable': false};
-      }
-
-      // Find APK in assets
-      final List assets = data['assets'] ?? [];
-      String apkUrl = '';
-      for (var asset in assets) {
-        final String name = (asset['name'] ?? '').toString().toLowerCase();
-        if (name.endsWith('.apk')) {
-          apkUrl = asset['browser_download_url'] ?? '';
-          print("[UPDATE CHECK] Found APK: $name -> $apkUrl");
-          break;
-        }
-      }
-
-      if (apkUrl.isEmpty) {
-        print("[UPDATE CHECK] Warning: No APK found in release assets");
-      }
-
-      final int comparisonResult = _compareVersions(localVersion, latestVersion);
-      final bool available = comparisonResult < 0;
-      
-      print("[UPDATE CHECK] Comparison: $localVersion vs $latestVersion -> available: $available");
-
-      return {
-        'updateAvailable': available,
-        'localVersion': localVersion,
-        'latestVersion': latestVersion,
-        'changelog': changelog,
-        'apkUrl': apkUrl,
-      };
-    } catch (e) {
-      print("[UPDATE CHECK] Exception: $e");
-      return {'updateAvailable': false, 'message': e.toString()};
-    }
-  }
-
-  static int _compareVersions(String v1, String v2) {
-    List<int> v1Components = v1.split('.').map((e) => int.tryParse(e) ?? 0).toList();
-    List<int> v2Components = v2.split('.').map((e) => int.tryParse(e) ?? 0).toList();
-    
-    int maxLength = v1Components.length > v2Components.length ? v1Components.length : v2Components.length;
-    
-    for (int i = 0; i < maxLength; i++) {
-      int c1 = i < v1Components.length ? v1Components[i] : 0;
-      int c2 = i < v2Components.length ? v2Components[i] : 0;
-      print("[UPDATE CHECK] Comparing segment $i: $c1 vs $c2");
-      if (c1 < c2) return -1;
-      if (c1 > c2) return 1;
-    }
-    return 0;
-  }
 
   static Future<List<dynamic>> getLeaderboard() async {
     try {
@@ -1151,10 +1225,10 @@ class ApiService {
     }
   }
 
-  static Future<Map<String, dynamic>> getNotifications() async {
+  static Future<Map<String, dynamic>> getNotifications({int page = 1}) async {
     final token = await getToken();
     final response = await http.get(
-      Uri.parse('${ApiConfig.baseUrl}/api/notifications'),
+      Uri.parse('${ApiConfig.baseUrl}/api/notifications?page=$page&limit=20'),
       headers: {'Authorization': 'Bearer $token'},
     );
     return jsonDecode(response.body);
@@ -1162,8 +1236,33 @@ class ApiService {
 
   static Future<void> markAllNotificationsRead() async {
     final token = await getToken();
-    await http.put(
-      Uri.parse('${ApiConfig.baseUrl}/api/notifications/read-all'),
+    await http.post(
+      Uri.parse('${ApiConfig.baseUrl}/api/notifications/mark-read'),
+      headers: {'Authorization': 'Bearer $token'},
+    );
+  }
+
+  static Future<int> getUnreadNotificationCount() async {
+    final token = await getToken();
+    if (token == null) return 0;
+    try {
+      final res = await http.get(
+        Uri.parse('${ApiConfig.baseUrl}/api/notifications/unread-count'),
+        headers: {'Authorization': 'Bearer $token'},
+      );
+      if (res.statusCode == 200) {
+        final data = jsonDecode(res.body);
+        return data['unreadCount'] ?? 0;
+      }
+    } catch (_) {}
+    return 0;
+  }
+
+  static Future<void> markOneNotificationRead(String id) async {
+    final token = await getToken();
+    if (token == null) return;
+    await http.post(
+      Uri.parse('${ApiConfig.baseUrl}/api/notifications/mark-one-read/$id'),
       headers: {'Authorization': 'Bearer $token'},
     );
   }

@@ -4,7 +4,6 @@ import 'package:mobile/services/auth_service.dart';
 import 'package:mobile/services/theme_controller.dart';
 import 'package:mobile/screens/login_screen.dart';
 import 'package:mobile/screens/archived_contents_screen.dart';
-import 'package:mobile/utils/update_checker.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 class SettingsScreen extends StatefulWidget {
@@ -18,7 +17,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
   Map<String, dynamic>? _user;
   bool _isPrivate = false;
   bool _isLoading = true;
-  bool _checkingUpdate = false;
 
   @override
   void initState() {
@@ -301,12 +299,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
     }
   }
 
-  Future<void> _checkForUpdates() async {
-    if (_checkingUpdate) return;
-    setState(() => _checkingUpdate = true);
-    await UpdateChecker.checkAndShowDialog(context);
-    if (mounted) setState(() => _checkingUpdate = false);
-  }
 
   Future<void> _confirmDeleteAccount() async {
     final shouldDelete = await showDialog<bool>(
@@ -484,15 +476,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 MaterialPageRoute(builder: (_) => const ArchivedContentsScreen()),
               );
             },
-          ),
-          ListTile(
-            leading: Icon(Icons.system_update_alt_rounded, color: muted),
-            title: Text('Check for Updates', style: TextStyle(color: fg)),
-            subtitle: Text('Install the latest APK without Play Store.', style: TextStyle(color: muted, fontSize: 12)),
-            trailing: _checkingUpdate
-                ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2))
-                : Icon(Icons.chevron_right, color: muted),
-            onTap: _checkForUpdates,
           ),
           ListTile(
             leading: const Icon(Icons.delete_forever_outlined, color: Colors.redAccent),

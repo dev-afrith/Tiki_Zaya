@@ -8,6 +8,9 @@ import 'package:mobile/screens/profile_screen.dart';
 import 'package:mobile/screens/chat_screen.dart';
 import 'package:mobile/services/api_service.dart';
 import 'package:mobile/utils/update_checker.dart';
+import 'package:mobile/services/notification_provider.dart';
+import 'package:provider/provider.dart';
+import 'package:mobile/widgets/badge_icon.dart';
 
 class MainNavigation extends StatefulWidget {
   const MainNavigation({super.key});
@@ -18,7 +21,6 @@ class MainNavigation extends StatefulWidget {
 
 class _MainNavigationState extends State<MainNavigation> {
   int _currentIndex = 0;
-  int _unreadMessages = 0;
 
   final List<Widget> _pages = [
     const HomeScreen(),
@@ -31,32 +33,23 @@ class _MainNavigationState extends State<MainNavigation> {
   @override
   void initState() {
     super.initState();
-    _loadUnreadCount();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      Provider.of<NotificationProvider>(context, listen: false).fetchCounts();
+    });
     // Automatic check for updates on startup
     Future.delayed(const Duration(seconds: 2), () {
       if (mounted) UpdateChecker.checkAndShowDialog(context, silent: true);
     });
   }
 
-  Future<void> _loadUnreadCount() async {
-    try {
-      final data = await ApiService.getUnreadMessagesCount();
-      if (mounted) {
-        setState(() {
-          _unreadMessages = (data['unreadTotal'] is num) ? (data['unreadTotal'] as num).toInt() : 0;
-        });
-      }
-    } catch (_) {}
-  }
-
   void _onTabTap(int index) {
     setState(() { _currentIndex = index; });
     // Refresh unread count when navigating away from chat
     if (index != 3) {
-      _loadUnreadCount();
+      Provider.of<NotificationProvider>(context, listen: false).fetchCounts();
     } else {
       // Clear badge when entering chat
-      setState(() { _unreadMessages = 0; });
+      Provider.of<NotificationProvider>(context, listen: false).setUnreadMessages(0);
     }
   }
   @override
@@ -105,7 +98,11 @@ class _MainNavigationState extends State<MainNavigation> {
                       _buildNavItem(0, Icons.home_outlined, Icons.home_filled),
                       _buildNavItem(1, Icons.search_rounded, Icons.search),
                       _buildCenterButton(),
-                      _buildNavItemWithBadge(3, Icons.chat_bubble_outline_rounded, Icons.chat_bubble_rounded, _unreadMessages),
+                      Consumer<NotificationProvider>(
+                        builder: (context, provider, child) {
+                          return _buildNavItemWithBadge(3, Icons.chat_bubble_outline_rounded, Icons.chat_bubble_rounded, provider.unreadMessages);
+                        },
+                      ),
                       _buildNavItem(4, Icons.person_outline, Icons.person),
                     ],
                   ),
@@ -145,35 +142,13 @@ class _MainNavigationState extends State<MainNavigation> {
       child: SizedBox(
         width: 50,
         height: 40,
-        child: Stack(
-          clipBehavior: Clip.none,
-          children: [
-            Center(
-              child: Icon(
-                isActive ? filledIcon : outlineIcon,
-                color: isActive ? const Color(0xFFFF3B8E) : Colors.white38,
-                size: 28,
-              ),
-            ),
-            if (badgeCount > 0)
-              Positioned(
-                right: 4,
-                top: 0,
-                child: Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
-                  decoration: BoxDecoration(
-                    color: const Color(0xFFFF006E),
-                    borderRadius: BorderRadius.circular(99),
-                  ),
-                  constraints: const BoxConstraints(minWidth: 16, minHeight: 14),
-                  child: Text(
-                    badgeCount > 99 ? '99+' : '$badgeCount',
-                    textAlign: TextAlign.center,
-                    style: const TextStyle(color: Colors.white, fontSize: 9, fontWeight: FontWeight.w700),
-                  ),
-                ),
-              ),
-          ],
+        child: Center(
+          child: BadgeIcon(
+            icon: isActive ? filledIcon : outlineIcon,
+            color: isActive ? const Color(0xFFFF3B8E) : Colors.white38,
+            iconSize: 28,
+            count: badgeCount,
+          ),
         ),
       ),
     );
