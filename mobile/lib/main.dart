@@ -9,6 +9,9 @@ import 'package:mobile/screens/profile_setup_screen.dart';
 import 'package:mobile/screens/welcome_screen.dart';
 
 import 'package:google_fonts/google_fonts.dart';
+import 'package:provider/provider.dart';
+import 'package:mobile/services/auth_provider.dart';
+import 'package:mobile/services/feed_provider.dart';
 
 final GlobalKey<NavigatorState> navigatorKey = GlobalKey<NavigatorState>();
 
@@ -37,7 +40,15 @@ void main() async {
     debugPrint('❌ Firebase Initialization Error: $e');
   }
   
-  runApp(TikiZayaApp(themeController: appThemeController));
+  runApp(
+    MultiProvider(
+      providers: [
+        ChangeNotifierProvider(create: (_) => AuthProvider()),
+        ChangeNotifierProvider(create: (_) => FeedProvider()),
+      ],
+      child: TikiZayaApp(themeController: appThemeController),
+    ),
+  );
 }
 
 class TikiZayaApp extends StatelessWidget {
@@ -129,68 +140,62 @@ class _SplashRouterState extends State<SplashRouter> {
 
   Future<void> _checkAuth() async {
     await Future.delayed(const Duration(seconds: 2)); // splash delay
-    final loggedIn = await ApiService.isLoggedIn();
+    if (!mounted) return;
 
-    if (!loggedIn) {
-      if (mounted) {
-        Navigator.pushReplacement(
-          context,
-          MaterialPageRoute(builder: (_) => const WelcomeScreen()),
-        );
-      }
+    final auth = Provider.of<AuthProvider>(context, listen: false);
+    await auth.checkAuthStatus();
+
+    if (!mounted) return;
+
+    if (!auth.isAuthenticated) {
+      Navigator.pushReplacement(
+        context,
+        MaterialPageRoute(builder: (_) => const WelcomeScreen()),
+      );
       return;
     }
 
-    try {
-      final summary = await ApiService.getGamificationSummary();
-      final profile = summary['user'] as Map<String, dynamic>? ?? <String, dynamic>{};
-      if (profile.isNotEmpty) {
-        final pref = (profile['themePreference'] ?? '').toString();
-        if (pref == 'light') {
-          await appThemeController.setThemeMode(ThemeMode.light);
-        } else if (pref == 'dark') {
-          await appThemeController.setThemeMode(ThemeMode.dark);
-        }
-        if (profile.containsKey('username') && profile['username'] != null && profile['username'].toString().isNotEmpty) {
-          await ApiService.saveUser(profile);
-          await NotificationService.initialize();
-          if (mounted) {
-            if ((profile['status'] ?? '').toString() == 'blocked') {
-              Navigator.pushReplacement(
-                context,
-                MaterialPageRoute(builder: (_) => const WelcomeScreen()),
-              );
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(content: Text('Your account is blocked. Contact support.')),
-              );
-            } else {
-              Navigator.pushReplacement(
-                context,
-                MaterialPageRoute(builder: (_) => const MainNavigation()),
-              );
-            }
-          }
-        } else {
-          if (mounted) {
+    final profile = auth.user ?? {};
+    if (profile.isNotEmpty) {
+      final pref = (profile['themePreference'] ?? '').toString();
+      if (pref == 'light') {
+        await appThemeController.setThemeMode(ThemeMode.light);
+      } else if (pref == 'dark') {
+        await appThemeController.setThemeMode(ThemeMode.dark);
+      }
+
+      if (profile.containsKey('username') && profile['username'] != null && profile['username'].toString().isNotEmpty) {
+        await NotificationService.initialize();
+        if (mounted) {
+          if ((profile['status'] ?? '').toString() == 'blocked') {
+            await auth.logout();
             Navigator.pushReplacement(
               context,
-              MaterialPageRoute(builder: (_) => const ProfileSetupScreen()),
+              MaterialPageRoute(builder: (_) => const WelcomeScreen()),
+            );
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(content: Text('Your account is blocked. Contact support.')),
+            );
+          } else {
+            Navigator.pushReplacement(
+              context,
+              MaterialPageRoute(builder: (_) => const MainNavigation()),
             );
           }
         }
-      } else if (mounted) {
-        Navigator.pushReplacement(
-          context,
-          MaterialPageRoute(builder: (_) => const WelcomeScreen()),
-        );
+      } else {
+        if (mounted) {
+          Navigator.pushReplacement(
+            context,
+            MaterialPageRoute(builder: (_) => const ProfileSetupScreen()),
+          );
+        }
       }
-    } catch (e) {
-      if (mounted) {
-        Navigator.pushReplacement(
-          context,
-          MaterialPageRoute(builder: (_) => const WelcomeScreen()),
-        );
-      }
+    } else {
+      Navigator.pushReplacement(
+        context,
+        MaterialPageRoute(builder: (_) => const WelcomeScreen()),
+      );
     }
   }
 

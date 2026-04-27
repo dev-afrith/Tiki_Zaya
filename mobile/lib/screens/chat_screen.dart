@@ -5,8 +5,6 @@ import 'package:image_picker/image_picker.dart';
 import 'package:mobile/services/api_service.dart';
 import 'package:mobile/screens/fullscreen_feed_screen.dart';
 import 'package:socket_io_client/socket_io_client.dart' as io;
-import 'package:mobile/screens/call_screen.dart';
-import 'package:mobile/services/call_service.dart';
 import 'package:mobile/widgets/voice_recorder_widget.dart';
 import 'package:mobile/widgets/audio_bubble.dart';
 import 'package:uuid/uuid.dart';
@@ -472,36 +470,7 @@ class _ChatThreadScreenState extends State<ChatThreadScreen> {
     _socket?.connect();
   }
 
-  Future<void> _initiateCall(String type) async {
-    final hasPerms = await CallService().handlePermissions(type == 'video');
-    if (!hasPerms) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Camera/Microphone permission required')),
-        );
-      }
-      return;
-    }
 
-    final result = await ApiService.initiateCall(widget.peerUserId, type: type);
-    if (!mounted) return;
-    if (result.containsKey('error')) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(result['error'])),
-      );
-      return;
-    }
-
-    Navigator.push(context, MaterialPageRoute(builder: (_) => CallScreen(
-      channelName: result['channelName'],
-      token: result['token'],
-      uid: result['uid'],
-      callerName: widget.peerUsername,
-      callerPic: widget.peerProfilePic,
-      isVideo: type == 'video',
-      remoteUid: result['receiverUid'],
-    )));
-  }
 
   Future<void> _sendMessage() async {
     final text = _messageController.text.trim();
@@ -839,16 +808,8 @@ class _ChatThreadScreenState extends State<ChatThreadScreen> {
             ),
           ],
         ),
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.call_outlined, color: Colors.white, size: 22),
-            onPressed: () => _initiateCall('voice'),
-          ),
-          IconButton(
-            icon: const Icon(Icons.videocam_outlined, color: Colors.white, size: 24),
-            onPressed: () => _initiateCall('video'),
-          ),
-          const SizedBox(width: 8),
+        actions: const [
+          SizedBox(width: 8),
         ],
       ),
       body: Column(
@@ -1078,17 +1039,7 @@ class _ChatThreadScreenState extends State<ChatThreadScreen> {
       return AudioBubble(audioUrl: voiceUrl, isMine: isMine);
     }
 
-    if (messageType == 'call') {
-      return Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          const Icon(Icons.video_call_rounded, color: Colors.white, size: 24),
-          const SizedBox(width: 8),
-          Text(item['text']?.toString() ?? 'Missed call',
-              style: GoogleFonts.outfit(color: Colors.white, fontSize: 15, fontWeight: FontWeight.w500)),
-        ],
-      );
-    }
+
 
     // Text message
     return Text(

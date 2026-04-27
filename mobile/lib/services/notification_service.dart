@@ -6,34 +6,15 @@ import 'package:mobile/services/api_service.dart';
 import 'package:mobile/main.dart'; // To get navigatorKey
 import 'package:mobile/screens/notifications_screen.dart';
 import 'package:mobile/screens/fullscreen_feed_screen.dart';
-import 'package:mobile/services/callkit_service.dart';
-import 'package:mobile/screens/call_screen.dart';
-import 'package:mobile/services/call_service.dart';
+import 'package:mobile/screens/chat_screen.dart';
+import 'package:mobile/screens/profile_screen.dart';
 
 @pragma('vm:entry-point')
 Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
   try {
     await Firebase.initializeApp();
     final data = message.data;
-    if (data['type'] == 'incoming_call') {
-      if (CallService().isInCall) {
-        await ApiService.handleCallAction(
-          data['callerId'] ?? '', 
-          data['channelName'] ?? '', 
-          'busy'
-        );
-        return;
-      }
-      await CallKitService().showIncomingCall(
-        callerName: data['callerName'] ?? 'Someone',
-        callType: data['callType'] ?? 'voice',
-        callerPic: data['callerPic'] ?? '',
-        channelName: data['channelName'] ?? '',
-        agoraToken: data['agoraToken'] ?? '',
-        receiverUid: data['receiverUid'] ?? '0',
-        callerId: data['callerId'] ?? '',
-      );
-    }
+    // Removed call handling logic
   } catch (_) {}
 }
 
@@ -62,23 +43,8 @@ class NotificationService {
       FirebaseMessaging.onMessage.listen((RemoteMessage message) {
         final data = message.data;
         if (data['type'] == 'incoming_call') {
-          if (CallService().isInCall) {
-            ApiService.handleCallAction(
-              data['callerId'] ?? '', 
-              data['channelName'] ?? '', 
-              'busy'
-            );
-            return;
-          }
-          CallKitService().showIncomingCall(
-            callerName: data['callerName'] ?? 'Someone',
-            callType: data['callType'] ?? 'voice',
-            callerPic: data['callerPic'] ?? '',
-            channelName: data['channelName'] ?? '',
-            agoraToken: data['agoraToken'] ?? '',
-            receiverUid: data['receiverUid'] ?? '0',
-            callerId: data['callerId'] ?? '',
-          );
+          // Calls disabled
+          return;
         } else {
           _showInAppNotification(message);
         }
@@ -89,35 +55,7 @@ class NotificationService {
         _handleNotificationTap(message.data);
       });
 
-      // Handle CallKit Events
-      CallKitService.onEvent.listen((event) {
-        if (event == null) return;
-        final data = event.body['extra'] ?? {};
-        
-        switch (event.event) {
-          case Event.actionCallAccept:
-            if (navigatorKey.currentContext != null) {
-              Navigator.push(navigatorKey.currentContext!, MaterialPageRoute(builder: (_) => CallScreen(
-                channelName: data['channelName'],
-                token: data['agoraToken'],
-                uid: int.parse(data['receiverUid']),
-                callerName: event.body['nameCaller'] ?? 'Someone',
-                isVideo: data['callType'] == 'video',
-                isIncoming: true,
-              )));
-            }
-            break;
-          case Event.actionCallDecline:
-            ApiService.handleCallAction(
-              data['callerId'] ?? '', 
-              data['channelName'] ?? '', 
-              'reject'
-            );
-            break;
-          default:
-            break;
-        }
-      });
+      // Removed CallKit Events listener
 
       // Process Terminated/Initial Clicks
       RemoteMessage? initialMessage = await messaging.getInitialMessage();

@@ -79,7 +79,6 @@ const gamificationRoutes = require('./routes/gamification');
 const messageRoutes = require('./routes/messages');
 const notificationRoutes = require('./routes/notifications');
 const streakRoutes = require('./routes/streaks');
-const callRoutes = require('./routes/calls');
 
 app.get('/api/health', (req, res) => {
   res.status(200).json({ status: 'ok', message: 'Tiki Zaya API is running!' });
@@ -97,7 +96,6 @@ app.use('/api/gamification', gamificationRoutes);
 app.use('/api/messages', messageRoutes);
 app.use('/api/notifications', notificationRoutes);
 app.use('/api/streaks', streakRoutes);
-app.use('/api/calls', callRoutes);
 
 app.use((req, res) => {
   res.status(404).json({ message: 'Route not found' });

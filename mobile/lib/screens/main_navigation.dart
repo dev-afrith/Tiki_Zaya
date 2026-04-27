@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'dart:ui';
 import 'package:mobile/screens/home_screen.dart';
 import 'package:mobile/screens/discover_screen.dart';
@@ -6,6 +7,7 @@ import 'package:mobile/screens/upload_screen.dart';
 import 'package:mobile/screens/profile_screen.dart';
 import 'package:mobile/screens/chat_screen.dart';
 import 'package:mobile/services/api_service.dart';
+import 'package:mobile/utils/update_checker.dart';
 
 class MainNavigation extends StatefulWidget {
   const MainNavigation({super.key});
@@ -30,6 +32,10 @@ class _MainNavigationState extends State<MainNavigation> {
   void initState() {
     super.initState();
     _loadUnreadCount();
+    // Automatic check for updates on startup
+    Future.delayed(const Duration(seconds: 2), () {
+      if (mounted) UpdateChecker.checkAndShowDialog(context, silent: true);
+    });
   }
 
   Future<void> _loadUnreadCount() async {
@@ -53,11 +59,34 @@ class _MainNavigationState extends State<MainNavigation> {
       setState(() { _unreadMessages = 0; });
     }
   }
-
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      body: _pages[_currentIndex],
+    return PopScope(
+      canPop: _currentIndex != 0,
+      onPopInvokedWithResult: (didPop, result) async {
+        if (didPop) return;
+        if (_currentIndex != 0) {
+          setState(() { _currentIndex = 0; });
+        } else {
+          final shouldExit = await showDialog<bool>(
+            context: context,
+            builder: (context) => AlertDialog(
+              backgroundColor: const Color(0xFF161616),
+              title: const Text('Exit App?', style: TextStyle(color: Colors.white)),
+              content: const Text('Are you sure you want to exit?', style: TextStyle(color: Colors.white70)),
+              actions: [
+                TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('No')),
+                TextButton(onPressed: () => Navigator.pop(context, true), child: const Text('Yes')),
+              ],
+            ),
+          );
+          if (shouldExit == true) {
+             SystemNavigator.pop();
+          }
+        }
+      },
+      child: Scaffold(
+        body: _pages[_currentIndex],
       bottomNavigationBar: Container(
         decoration: BoxDecoration(
           border: Border(top: BorderSide(color: Colors.white.withValues(alpha: 0.06))),
@@ -86,7 +115,7 @@ class _MainNavigationState extends State<MainNavigation> {
           ),
         ),
       ),
-    );
+    ),);
   }
 
   Widget _buildNavItem(int index, IconData outlineIcon, IconData filledIcon) {

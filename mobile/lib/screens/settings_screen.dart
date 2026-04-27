@@ -4,6 +4,7 @@ import 'package:mobile/services/auth_service.dart';
 import 'package:mobile/services/theme_controller.dart';
 import 'package:mobile/screens/login_screen.dart';
 import 'package:mobile/screens/archived_contents_screen.dart';
+import 'package:mobile/utils/update_checker.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 class SettingsScreen extends StatefulWidget {
@@ -303,54 +304,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
   Future<void> _checkForUpdates() async {
     if (_checkingUpdate) return;
     setState(() => _checkingUpdate = true);
-    try {
-      final update = await ApiService.checkForUpdate();
-      if (!mounted) return;
-      final changelog = (update['changelog'] as List?)?.map((item) => item.toString()).toList() ?? const <String>[];
-      final latestVersion = (update['latestVersion'] ?? '1.0.0').toString();
-      final apkUrl = (update['apkUrl'] ?? '').toString();
-      final available = update['updateAvailable'] == true;
-
-      showDialog(
-        context: context,
-        builder: (context) => AlertDialog(
-          backgroundColor: const Color(0xFF161616),
-          title: Text(
-            available ? 'Update Available' : 'You are up to date',
-            style: const TextStyle(color: Colors.white),
-          ),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text('Latest version: $latestVersion', style: const TextStyle(color: Colors.white70)),
-              const SizedBox(height: 12),
-              ...changelog.map((item) => Padding(
-                    padding: const EdgeInsets.only(bottom: 6),
-                    child: Text('- $item', style: const TextStyle(color: Colors.white60)),
-                  )),
-            ],
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(context),
-              child: const Text('Close'),
-            ),
-            if (available)
-              ElevatedButton(
-                onPressed: () async {
-                  final uri = Uri.tryParse(apkUrl);
-                  if (uri != null) await launchUrl(uri, mode: LaunchMode.externalApplication);
-                },
-                style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFFFF006E)),
-                child: const Text('Update', style: TextStyle(color: Colors.white)),
-              ),
-          ],
-        ),
-      );
-    } finally {
-      if (mounted) setState(() => _checkingUpdate = false);
-    }
+    await UpdateChecker.checkAndShowDialog(context);
+    if (mounted) setState(() => _checkingUpdate = false);
   }
 
   Future<void> _confirmDeleteAccount() async {

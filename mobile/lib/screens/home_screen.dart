@@ -13,6 +13,10 @@ import 'package:mobile/widgets/like_animation_widget.dart';
 import 'package:mobile/widgets/post_widget.dart';
 import 'package:share_plus/share_plus.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:provider/provider.dart';
+import 'package:mobile/services/auth_provider.dart';
+import 'package:mobile/services/feed_provider.dart';
+import 'package:cached_network_image/cached_network_image.dart';
 import 'dart:async';
 
 // ─────────────────────────────────────────────────────────────
@@ -29,13 +33,7 @@ class HomeScreen extends StatefulWidget {
 class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateMixin {
   final PageController _pageController = PageController();
   late final AnimationController _titleGlowController;
-  final List<dynamic> _videos = [];
-  Map<String, dynamic>? _currentUser;
-  bool _isLoading = true;
-  bool _isLoadingFeedMore = false;
-  String? _feedError;
-  int _currentPage = 1;
-  bool _hasMore = true;
+  // removed local _videos list
   int _focusedIndex = 0;
   int _unreadNotifications = 0;
   int _tzPoints = 0;
@@ -59,33 +57,16 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
   }
 
   Future<void> _loadData() async {
-    if (mounted) {
-      setState(() {
-        _isLoading = true;
-        _feedError = null;
-      });
-    }
+    final auth = Provider.of<AuthProvider>(context, listen: false);
+    final feed = Provider.of<FeedProvider>(context, listen: false);
 
     try {
       final summary = await ApiService.getGamificationSummary();
       _applyGamificationSummary(summary);
-
       await _maybeShowWelcome(summary);
-
       await _loadNotifications();
-      await _loadFeed(reset: true);
-    } catch (_) {
-      if (!mounted) return;
-      setState(() {
-        _feedError = 'Unable to load your feed right now.';
-      });
-    } finally {
-      if (mounted) {
-        setState(() {
-          _isLoading = false;
-        });
-      }
-    }
+      await feed.fetchFeed(reset: true);
+    } catch (_) {}
   }
 
   void _applyGamificationSummary(Map<String, dynamic> summary) {
@@ -93,8 +74,10 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
     final gamification = summary['gamification'] as Map<String, dynamic>? ?? <String, dynamic>{};
 
     if (!mounted) return;
+    final auth = Provider.of<AuthProvider>(context, listen: false);
+    if (user != null) auth.updateProfile(user);
+    
     setState(() {
-      _currentUser = user;
       _tzPoints = _readInt(gamification['points'], _tzPoints);
       _streakDays = _readInt(gamification['streakDays'], _streakDays);
     });
@@ -143,60 +126,9 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
     }
   }
 
-  Future<void> _loadFeed({bool reset = false}) async {
-    if (_isLoadingFeedMore) return;
-    if (!reset && !_hasMore) return;
-
-    if (mounted) {
-      setState(() {
-        _isLoadingFeedMore = true;
-      });
-    }
-
-    try {
-      final pageToLoad = reset ? 1 : _currentPage;
-      final data = await ApiService.getFeed(page: pageToLoad, limit: 10);
-      final items = (data['videos'] as List?) ?? [];
-      final totalPages = (data['totalPages'] is num) ? (data['totalPages'] as num).toInt() : 1;
-
-      if (!mounted) return;
-      setState(() {
-        if (reset) {
-          _videos
-            ..clear()
-            ..addAll(items);
-          _currentPage = 2;
-        } else {
-          _videos.addAll(items);
-          _currentPage += 1;
-        }
-        _hasMore = pageToLoad < totalPages && items.isNotEmpty;
-      });
-    } catch (_) {
-      if (!mounted) return;
-      setState(() {
-        _feedError = 'Could not load videos.';
-      });
-    } finally {
-      if (mounted) {
-        setState(() {
-          _isLoadingFeedMore = false;
-        });
-      }
-    }
-  }
-
   Future<void> _refresh() async {
     await _loadNotifications();
-    await _loadFeed(reset: true);
-  }
-
-  void _openNotifications() async {
-    await Navigator.push(
-      context,
-      MaterialPageRoute(builder: (_) => const NotificationsScreen()),
-    );
-    await _loadNotifications();
+    await Provider.of<FeedProvider>(context, listen: false).fetchFeed(reset: true);
   }
 
   void _openRewards() {
@@ -218,25 +150,25 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
     return fallback;
   }
 
-  void _onPageChanged(int index) {
-    setState(() {
-      _focusedIndex = index;
-    });
-    if (index >= _videos.length - 2) {
-      _loadFeed();
-    }
-  }
 
-  void _openFullscreen(int index) {
+
+  void _openFullscreen(int index, List<dynamic> videos, Map<String, dynamic>? currentUser) {
     Navigator.push(
       context,
       MaterialPageRoute(
         builder: (_) => FullscreenFeedScreen(
-          videos: _videos,
+          videos: videos,
           initialIndex: index,
-          currentUser: _currentUser,
+          currentUser: currentUser,
         ),
       ),
+    );
+  }
+
+  void _openNotifications() {
+    Navigator.push(
+      context,
+      MaterialPageRoute(builder: (_) => const NotificationsScreen()),
     );
   }
 
@@ -260,69 +192,79 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
   }
 
   Widget _buildFeedBody() {
-    if (_isLoading) {
-      return const Center(child: CircularProgressIndicator(color: Color(0xFFFF006E)));
-    }
+    return Consumer2<FeedProvider, AuthProvider>(
+      builder: (context, feed, auth, child) {
+        if (feed.isLoading && feed.videos.isEmpty) {
+          return const Center(child: CircularProgressIndicator(color: Color(0xFFFF006E)));
+        }
 
-    if (_feedError != null && _videos.isEmpty) {
-      return Center(
-        child: Padding(
-          padding: const EdgeInsets.all(24),
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              Text(_feedError!, style: const TextStyle(color: Colors.white70), textAlign: TextAlign.center),
-              const SizedBox(height: 12),
-              ElevatedButton(
-                onPressed: _loadData,
-                child: const Text('Retry'),
+        if (feed.error != null && feed.videos.isEmpty) {
+          return Center(
+            child: Padding(
+              padding: const EdgeInsets.all(24),
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Text(feed.error!, style: const TextStyle(color: Colors.white70), textAlign: TextAlign.center),
+                  const SizedBox(height: 12),
+                  ElevatedButton(
+                    onPressed: _loadData,
+                    child: const Text('Retry'),
+                  ),
+                ],
               ),
+            ),
+          );
+        }
+
+        if (feed.videos.isEmpty) {
+          return const Center(
+            child: Text('No videos yet. Upload your first reel!', style: TextStyle(color: Colors.white70)),
+          );
+        }
+
+        return RefreshIndicator(
+          color: const Color(0xFFFF006E),
+          onRefresh: _refresh,
+          child: Column(
+            children: [
+              Expanded(
+                child: PageView.builder(
+                  controller: _pageController,
+                  scrollDirection: Axis.vertical,
+                  onPageChanged: (index) {
+                    setState(() { _focusedIndex = index; });
+                    if (index >= feed.videos.length - 2) {
+                      feed.fetchFeed();
+                    }
+                  },
+                  itemCount: feed.videos.length,
+                  itemBuilder: (context, index) {
+                    return FeedPost(
+                      video: feed.videos[index],
+                      shouldPlay: _focusedIndex == index,
+                      shouldPreload: _focusedIndex + 1 == index,
+                      currentUser: auth.user,
+                      isFullscreen: false,
+                      onRequestFullscreen: () => _openFullscreen(index, feed.videos, auth.user),
+                      onGamificationChanged: _refreshGamificationOnly,
+                    );
+                  },
+                ),
+              ),
+              if (feed.isLoadingMore)
+                const Padding(
+                  padding: EdgeInsets.only(bottom: 10),
+                  child: SizedBox(
+                    width: 20,
+                    height: 20,
+                    child: CircularProgressIndicator(strokeWidth: 2, color: Color(0xFFFF006E)),
+                  ),
+                ),
             ],
           ),
-        ),
-      );
-    }
-
-    if (_videos.isEmpty) {
-      return const Center(
-        child: Text('No videos yet. Upload your first reel!', style: TextStyle(color: Colors.white70)),
-      );
-    }
-
-    return RefreshIndicator(
-      color: const Color(0xFFFF006E),
-      onRefresh: _refresh,
-      child: Column(
-        children: [
-          Expanded(
-            child: PageView.builder(
-              controller: _pageController,
-              scrollDirection: Axis.vertical,
-              onPageChanged: _onPageChanged,
-              itemCount: _videos.length,
-              itemBuilder: (context, index) {
-                return FeedPost(
-                  video: _videos[index],
-                  shouldPlay: _focusedIndex == index,
-                  currentUser: _currentUser,
-                  isFullscreen: false,
-                  onRequestFullscreen: () => _openFullscreen(index),
-                  onGamificationChanged: _refreshGamificationOnly,
-                );
-              },
-            ),
-          ),
-          if (_isLoadingFeedMore)
-            const Padding(
-              padding: EdgeInsets.only(bottom: 10),
-              child: SizedBox(
-                width: 20,
-                height: 20,
-                child: CircularProgressIndicator(strokeWidth: 2, color: Color(0xFFFF006E)),
-              ),
-            ),
-        ],
-      ),
+        );
+      },
     );
   }
 
@@ -427,6 +369,7 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
 class FeedPost extends StatefulWidget {
   final dynamic video;
   final bool shouldPlay;
+  final bool shouldPreload;
   final Map<String, dynamic>? currentUser;
   final bool isFullscreen;
   final VoidCallback? onRequestFullscreen;
@@ -437,6 +380,7 @@ class FeedPost extends StatefulWidget {
     super.key,
     required this.video,
     required this.shouldPlay,
+    this.shouldPreload = false,
     this.currentUser,
     this.isFullscreen = false,
     this.onRequestFullscreen,
@@ -473,6 +417,13 @@ class _FeedPostState extends State<FeedPost> {
   bool _streakAcknowledged = false;
   double _lastTrackedWatchPosition = 0;
 
+  bool get canFollow {
+    final author = widget.video['userId'];
+    final authorId = author is Map ? author['_id']?.toString() : author?.toString();
+    final myId = widget.currentUser?['id']?.toString() ?? widget.currentUser?['_id']?.toString();
+    return authorId != null && myId != authorId && !_isFollowing;
+  }
+
   // Toggle this from app settings when needed.
   bool _enableDoubleTapAnimations = true;
   LikeAnimationStyle _animationStyle = LikeAnimationStyle.puzzle;
@@ -490,7 +441,9 @@ class _FeedPostState extends State<FeedPost> {
     _commentsCountLive = (widget.video['commentsCount'] is num) ? (widget.video['commentsCount'] as num).toInt() : 0;
     _isArchived = widget.video['isArchived'] == true;
     _initVideo();
-    _checkInitialStates();
+    if (widget.shouldPlay || widget.shouldPreload) {
+       _checkInitialStates();
+    }
     _startStatsPollingIfNeeded();
     _startWatchTrackingIfNeeded();
 
@@ -521,6 +474,11 @@ class _FeedPostState extends State<FeedPost> {
   @override
   void didUpdateWidget(FeedPost oldWidget) {
     super.didUpdateWidget(oldWidget);
+    
+    if (!_isInitialized && (widget.shouldPlay || widget.shouldPreload)) {
+      _initVideo();
+    }
+
     if (_isInitialized) {
       if (widget.shouldPlay && !oldWidget.shouldPlay) {
         _controller.play();
@@ -591,6 +549,9 @@ class _FeedPostState extends State<FeedPost> {
   }
 
   Future<void> _initVideo() async {
+    if (!widget.shouldPlay && !widget.shouldPreload) return;
+    if (_isInitialized) return;
+
     final videoUrl = (widget.video['videoUrl'] ?? '').toString();
     if (videoUrl.isEmpty) {
       if (mounted) {
@@ -639,41 +600,36 @@ class _FeedPostState extends State<FeedPost> {
   }
 
   Future<void> _toggleLike() async {
-    if (_isLikeRequestInFlight) return;
+    final auth = Provider.of<AuthProvider>(context, listen: false);
+    final feed = Provider.of<FeedProvider>(context, listen: false);
+    if (!auth.isAuthenticated) return;
 
-    _isLikeRequestInFlight = true;
+    final userId = (auth.user?['id'] ?? auth.user?['_id'] ?? '').toString();
+    final videoId = (widget.video['_id'] ?? '').toString();
+    if (userId.isEmpty || videoId.isEmpty) return;
+
     try {
-      final videoId = (widget.video['_id'] ?? '').toString();
-      if (videoId.isEmpty) return;
-
-      // Backend placeholder call for like persistence.
-      final result = await ApiService.toggleLike(videoId);
-      if (mounted) {
-        final likedNow = result['liked'] ?? false;
-        setState(() {
-          _isLiked = likedNow;
-          _likesCount = result['likes'] ?? _likesCount;
-        });
-        widget.onGamificationChanged?.call();
-      }
-    } catch (e) { debugPrint('Like error: $e'); }
-    finally {
-      _isLikeRequestInFlight = false;
+      await feed.toggleLike(videoId, userId);
+      widget.onGamificationChanged?.call();
+    } catch (e) {
+      debugPrint('Like error: $e');
     }
   }
 
   Future<void> _toggleFavorite() async {
+    final auth = Provider.of<AuthProvider>(context, listen: false);
+    final feed = Provider.of<FeedProvider>(context, listen: false);
+    if (!auth.isAuthenticated) return;
+
+    final userId = (auth.user?['id'] ?? auth.user?['_id'] ?? '').toString();
+    final videoId = (widget.video['_id'] ?? '').toString();
+    if (userId.isEmpty || videoId.isEmpty) return;
+
     try {
-      final videoId = (widget.video['_id'] ?? '').toString();
-      if (videoId.isEmpty) return;
-      final result = await ApiService.toggleFavorite(videoId);
-      if (mounted) {
-        setState(() {
-          _isFavorited = result['favorited'] ?? false;
-          _favoritesCount = result['favoritesCount'] ?? _favoritesCount;
-        });
-      }
-    } catch (e) { debugPrint('Favorite error: $e'); }
+      await feed.toggleFavorite(videoId, userId);
+    } catch (e) {
+      debugPrint('Favorite error: $e');
+    }
   }
 
   Future<void> _toggleFollowAuthor() async {
@@ -682,6 +638,7 @@ class _FeedPostState extends State<FeedPost> {
     if (authorId == null) return;
     try {
       await ApiService.toggleFollow(authorId);
+      // We could add follow state to AuthProvider but for now let's keep it local or refresh user
       if (mounted) {
         setState(() {
           _isFollowing = !_isFollowing;
@@ -693,16 +650,12 @@ class _FeedPostState extends State<FeedPost> {
   }
 
   Future<void> _toggleRepost() async {
+    final feed = Provider.of<FeedProvider>(context, listen: false);
+    final videoId = (widget.video['_id'] ?? '').toString();
+    if (videoId.isEmpty) return;
+
     try {
-      final videoId = (widget.video['_id'] ?? '').toString();
-      if (videoId.isEmpty) return;
-      final result = await ApiService.toggleRepost(videoId);
-      if (mounted) {
-        setState(() {
-          _isReposted = result['reposted'] ?? false;
-          _repostsCount = (result['repostsCount'] is num) ? (result['repostsCount'] as num).toInt() : _repostsCount;
-        });
-      }
+      await feed.toggleRepost(videoId);
     } catch (e) {
       debugPrint('Repost error: $e');
     }
@@ -1344,10 +1297,20 @@ class _FeedPostState extends State<FeedPost> {
     final username = user is Map ? (user['username'] ?? 'Unknown').toString() : 'Unknown';
     final profilePic = user is Map ? (user['profilePic'] ?? '').toString() : '';
     final authorId = user is Map ? (user['_id'] ?? '').toString() : user?.toString() ?? '';
-    final myId = widget.currentUser?['id']?.toString() ?? widget.currentUser?['_id']?.toString() ?? '';
+    final myId = widget.currentUser?['id']?.toString() ?? widget.currentUser?['_id'] ?? '';
     final isOwnReel = authorId.isNotEmpty && myId.isNotEmpty && authorId == myId;
-    final canFollow = authorId.isNotEmpty && myId.isNotEmpty && !isOwnReel;
-    final commentsCount = _commentsCountLive;
+    
+    // Likes, Favorites, Reposts from props (updated by FeedProvider)
+    final likes = widget.video['likes'] as List? ?? [];
+    final favorites = widget.video['favorites'] as List? ?? [];
+    final repostsCount = (widget.video['repostsCount'] is num) ? (widget.video['repostsCount'] as num).toInt() : 0;
+    final isLiked = likes.contains(myId);
+    final isFavorited = favorites.contains(myId);
+    final isReposted = (widget.video['isReposted'] == true); // You might need a more robust check if isReposted is in user reposts list
+    
+    final commentsCount = (widget.video['commentsCount'] is num) ? (widget.video['commentsCount'] as num).toInt() : 0;
+    final sharesCount = (widget.video['sharesCount'] is num) ? (widget.video['sharesCount'] as num).toInt() : 0;
+    
     final timeAgo = _timeAgo(widget.video['createdAt']?.toString());
     
     // Metadata
@@ -1448,9 +1411,9 @@ class _FeedPostState extends State<FeedPost> {
                   children: [
                     // Like
                     _buildEngagement(
-                      icon: _isLiked ? Icons.favorite : Icons.favorite_border,
-                      label: _formatCount(_likesCount),
-                      color: _isLiked ? const Color(0xFFFF006E) : Colors.white,
+                      icon: isLiked ? Icons.favorite : Icons.favorite_border,
+                      label: _formatCount(likes.length),
+                      color: isLiked ? const Color(0xFFFF006E) : Colors.white,
                       onTap: _toggleLike,
                       iconSize: railIconSize,
                       labelSize: railLabelSize,
@@ -1480,8 +1443,8 @@ class _FeedPostState extends State<FeedPost> {
                     SizedBox(height: railSpacing),
                     _buildEngagement(
                       icon: Icons.repeat_rounded,
-                      label: _formatCount(_repostsCount),
-                      color: _isReposted ? const Color(0xFF4ADE80) : Colors.white,
+                      label: _formatCount(repostsCount),
+                      color: isReposted ? const Color(0xFF4ADE80) : Colors.white,
                       onTap: _toggleRepost,
                       iconSize: railIconSize,
                       labelSize: railLabelSize,
@@ -1490,16 +1453,16 @@ class _FeedPostState extends State<FeedPost> {
                     // Share
                     _buildEngagement(
                       icon: Icons.send_outlined,
-                      label: _formatCount(_sharesCount),
+                      label: _formatCount(sharesCount),
                       onTap: _openShareOptions,
                       iconSize: railIconSize,
                       labelSize: railLabelSize,
                     ),
                     SizedBox(height: railSpacing),
                     _buildEngagement(
-                      icon: _isFavorited ? Icons.bookmark : Icons.bookmark_border,
-                      label: _formatCount(_favoritesCount),
-                      color: _isFavorited ? const Color(0xFFFFC107) : Colors.white,
+                      icon: isFavorited ? Icons.bookmark : Icons.bookmark_border,
+                      label: _formatCount(favorites.length),
+                      color: isFavorited ? const Color(0xFFFFC107) : Colors.white,
                       onTap: _toggleFavorite,
                       iconSize: railIconSize,
                       labelSize: railLabelSize,
@@ -1542,17 +1505,25 @@ class _FeedPostState extends State<FeedPost> {
                             child: Row(
                               mainAxisSize: MainAxisSize.min,
                               children: [
-                                CircleAvatar(
-                                  radius: 11,
-                                  backgroundColor: Colors.white24,
-                                  backgroundImage: profilePic.isNotEmpty ? NetworkImage(profilePic) : null,
-                                  child: profilePic.isEmpty
-                                      ? Text(
-                                          username.isNotEmpty ? username[0].toUpperCase() : 'U',
-                                          style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w700, fontSize: 10),
-                                        )
-                                      : null,
-                                ),
+                                  CircleAvatar(
+                                    radius: 11,
+                                    backgroundColor: Colors.white24,
+                                    child: profilePic.isNotEmpty
+                                        ? ClipOval(
+                                            child: CachedNetworkImage(
+                                              imageUrl: profilePic,
+                                              width: 22,
+                                              height: 22,
+                                              fit: BoxFit.cover,
+                                              placeholder: (context, url) => const SizedBox.shrink(),
+                                              errorWidget: (context, url, error) => const Icon(Icons.person, size: 14, color: Colors.white),
+                                            ),
+                                          )
+                                        : Text(
+                                            username.isNotEmpty ? username[0].toUpperCase() : 'U',
+                                            style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w700, fontSize: 10),
+                                          ),
+                                  ),
                                 const SizedBox(width: 7),
                                 Text(
                                   '@$username',

@@ -6,6 +6,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:dio/dio.dart' as dio;
+import 'package:package_info_plus/package_info_plus.dart';
 import '../config/api_config.dart';
 
 class ApiService {
@@ -876,16 +877,86 @@ class ApiService {
     return decoded is Map<String, dynamic> ? decoded : {'ok': false};
   }
 
-  static Future<Map<String, dynamic>> checkForUpdate({String installedVersion = '1.0.0'}) async {
+  static Future<Map<String, dynamic>> checkForUpdate() async {
     try {
+      final PackageInfo packageInfo = await PackageInfo.fromPlatform();
+      final String localVersion = packageInfo.version;
+      print("[UPDATE CHECK] Current Version: $localVersion");
+
+      // GitHub API for latest release
       final response = await http.get(
-        Uri.parse('${ApiConfig.baseUrl}/api/gamification/app-update?version=${Uri.encodeComponent(installedVersion)}'),
+        Uri.parse('https://api.github.com/repos/dev-afrith/Tiki_Zaya/releases/latest'),
+        headers: {'User-Agent': 'TikiZaya-App'},
       );
-      final decoded = jsonDecode(response.body);
-      return decoded is Map<String, dynamic> ? decoded : {'updateAvailable': false};
-    } catch (_) {
-      return {'updateAvailable': false, 'message': 'Unable to check updates'};
+      
+      if (response.statusCode != 200) {
+        print("[UPDATE CHECK] Error: GitHub API returned status ${response.statusCode}");
+        return {'updateAvailable': false, 'message': 'GitHub API error: ${response.statusCode}'};
+      }
+
+      final data = jsonDecode(response.body);
+      final String latestTag = (data['tag_name'] ?? '').toString();
+      final String changelog = (data['body'] ?? '').toString();
+      
+      print("[UPDATE CHECK] Raw latest tag: $latestTag");
+
+      // Extract latest version (remove 'v' prefix)
+      final String latestVersion = latestTag.replaceAll("v", "");
+      print("[UPDATE CHECK] Parsed latest version: $latestVersion");
+      
+      if (latestVersion.isEmpty) {
+        print("[UPDATE CHECK] Error: Could not parse version from tag");
+        return {'updateAvailable': false};
+      }
+
+      // Find APK in assets
+      final List assets = data['assets'] ?? [];
+      String apkUrl = '';
+      for (var asset in assets) {
+        final String name = (asset['name'] ?? '').toString().toLowerCase();
+        if (name.endsWith('.apk')) {
+          apkUrl = asset['browser_download_url'] ?? '';
+          print("[UPDATE CHECK] Found APK: $name -> $apkUrl");
+          break;
+        }
+      }
+
+      if (apkUrl.isEmpty) {
+        print("[UPDATE CHECK] Warning: No APK found in release assets");
+      }
+
+      final int comparisonResult = _compareVersions(localVersion, latestVersion);
+      final bool available = comparisonResult < 0;
+      
+      print("[UPDATE CHECK] Comparison: $localVersion vs $latestVersion -> available: $available");
+
+      return {
+        'updateAvailable': available,
+        'localVersion': localVersion,
+        'latestVersion': latestVersion,
+        'changelog': changelog,
+        'apkUrl': apkUrl,
+      };
+    } catch (e) {
+      print("[UPDATE CHECK] Exception: $e");
+      return {'updateAvailable': false, 'message': e.toString()};
     }
+  }
+
+  static int _compareVersions(String v1, String v2) {
+    List<int> v1Components = v1.split('.').map((e) => int.tryParse(e) ?? 0).toList();
+    List<int> v2Components = v2.split('.').map((e) => int.tryParse(e) ?? 0).toList();
+    
+    int maxLength = v1Components.length > v2Components.length ? v1Components.length : v2Components.length;
+    
+    for (int i = 0; i < maxLength; i++) {
+      int c1 = i < v1Components.length ? v1Components[i] : 0;
+      int c2 = i < v2Components.length ? v2Components[i] : 0;
+      print("[UPDATE CHECK] Comparing segment $i: $c1 vs $c2");
+      if (c1 < c2) return -1;
+      if (c1 > c2) return 1;
+    }
+    return 0;
   }
 
   static Future<List<dynamic>> getLeaderboard() async {

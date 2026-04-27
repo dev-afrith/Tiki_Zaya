@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:mobile/services/api_service.dart';
+import 'package:provider/provider.dart';
+import 'package:mobile/services/auth_provider.dart';
 
 class CommentsSheet extends StatefulWidget {
   final String videoId;
@@ -100,33 +102,83 @@ class _CommentsSheetState extends State<CommentsSheet> {
     final text = _commentController.text.trim();
     if (text.isEmpty) return;
 
+    final auth = Provider.of<AuthProvider>(context, listen: false);
+    final user = auth.user;
+    if (user == null) return;
+
+    final tempId = DateTime.now().millisecondsSinceEpoch.toString();
+    final tempComment = {
+      '_id': tempId,
+      'text': text,
+      'userId': {
+        '_id': _currentUserId,
+        'username': user['username'] ?? 'Me',
+        'profilePic': user['profilePic'] ?? '',
+      },
+      'likes': [],
+      'replies': [],
+      'createdAt': DateTime.now().toIso8601String(),
+      'isSending': true,
+    };
+
+    final oldComments = List<dynamic>.from(_comments);
+    final replyTo = _replyTo;
+
+    setState(() {
+      if (replyTo != null) {
+        final parentIndex = _comments.indexWhere((item) => item['_id'] == replyTo['_id']);
+        if (parentIndex != -1) {
+          final parent = Map<String, dynamic>.from(_comments[parentIndex]);
+          final replies = List<dynamic>.from(parent['replies'] ?? []);
+          replies.add(tempComment);
+          parent['replies'] = replies;
+          parent['replyCount'] = (parent['replyCount'] ?? 0) + 1;
+          _comments[parentIndex] = parent;
+        }
+      } else {
+        _comments.insert(0, tempComment);
+      }
+      _commentController.clear();
+      _replyTo = null;
+    });
+
     try {
-      final comment = _replyTo != null
-          ? await ApiService.addCommentReply(widget.videoId, text, _replyTo!['_id'].toString())
+      final comment = replyTo != null
+          ? await ApiService.addCommentReply(widget.videoId, text, replyTo['_id'].toString())
           : await ApiService.addComment(widget.videoId, text);
 
       if (!mounted) return;
 
       setState(() {
-        if (_replyTo != null) {
-          final parentIndex = _comments.indexWhere((item) => item['_id'] == _replyTo!['_id']);
+        if (replyTo != null) {
+          final parentIndex = _comments.indexWhere((item) => item['_id'] == replyTo['_id']);
           if (parentIndex != -1) {
             final parent = Map<String, dynamic>.from(_comments[parentIndex]);
             final replies = List<dynamic>.from(parent['replies'] ?? []);
-            replies.add(comment);
-            parent['replies'] = replies;
-            parent['replyCount'] = (parent['replyCount'] ?? 0) + 1;
-            _comments[parentIndex] = parent;
+            final tempIdx = replies.indexWhere((r) => r['_id'] == tempId);
+            if (tempIdx != -1) {
+              replies[tempIdx] = comment;
+              parent['replies'] = replies;
+              _comments[parentIndex] = parent;
+            }
           }
         } else {
-          _comments.insert(0, comment);
+          final tempIdx = _comments.indexWhere((c) => c['_id'] == tempId);
+          if (tempIdx != -1) {
+            _comments[tempIdx] = comment;
+          }
         }
-        _commentController.clear();
-        _replyTo = null;
       });
       widget.onGamificationChanged?.call();
     } catch (e) {
-      debugPrint('Comment error: $e');
+      if (mounted) {
+        setState(() {
+          _comments = oldComments;
+        });
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Failed to post comment')),
+        );
+      }
     }
   }
 
