@@ -1009,10 +1009,12 @@ class _ChatThreadScreenState extends State<ChatThreadScreen> {
                 ],
               ),
             ),
-          ),
-        ],
+          ],
+        ),
       ),
-    );
+    ],
+  ),
+);
   }
 
   // ─────────────────── BUBBLE RADIUS ───────────────────
