@@ -17,7 +17,10 @@ exports.getNotifications = async (req, res) => {
       mapped.push(await buildNotificationPayload(notification));
     }
 
-    const unreadCount = await Notification.countDocuments({ userId: req.userId, isRead: false });
+    const unreadCount = await Notification.countDocuments({ 
+      userId: req.userId, 
+      $or: [{ isRead: false }, { isRead: { $exists: false }, readAt: null }] 
+    });
     
     // Check if there's more
     const totalCount = await Notification.countDocuments({ userId: req.userId });
@@ -31,7 +34,10 @@ exports.getNotifications = async (req, res) => {
 
 exports.getUnreadCount = async (req, res) => {
   try {
-    const unreadCount = await Notification.countDocuments({ userId: req.userId, isRead: false });
+    const unreadCount = await Notification.countDocuments({ 
+      userId: req.userId, 
+      $or: [{ isRead: false }, { isRead: { $exists: false }, readAt: null }] 
+    });
     res.status(200).json({ unreadCount });
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -41,8 +47,8 @@ exports.getUnreadCount = async (req, res) => {
 exports.markAllRead = async (req, res) => {
   try {
     await Notification.updateMany(
-      { userId: req.userId, isRead: false },
-      { $set: { isRead: true } }
+      { userId: req.userId, $or: [{ isRead: false }, { isRead: { $exists: false }, readAt: null }] },
+      { $set: { isRead: true, readAt: new Date() } }
     );
     res.status(200).json({ ok: true });
   } catch (error) {
@@ -54,9 +60,12 @@ exports.markOneRead = async (req, res) => {
   try {
     await Notification.findOneAndUpdate(
       { _id: req.params.id, userId: req.userId },
-      { $set: { isRead: true } }
+      { $set: { isRead: true, readAt: new Date() } }
     );
-    const unreadCount = await Notification.countDocuments({ userId: req.userId, isRead: false });
+    const unreadCount = await Notification.countDocuments({ 
+      userId: req.userId, 
+      $or: [{ isRead: false }, { isRead: { $exists: false }, readAt: null }] 
+    });
     res.status(200).json({ ok: true, unreadCount });
   } catch (error) {
     res.status(500).json({ error: error.message });

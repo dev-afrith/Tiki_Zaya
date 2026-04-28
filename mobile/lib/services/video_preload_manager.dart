@@ -158,4 +158,14 @@ class VideoPreloadManager {
       controller.play();
     }
   }
+
+  /// Resume controller at a specific index (for tab switch resumption).
+  void resumeCurrentIndex(int index) {
+    _currentIndex = index;
+    final controller = _controllers[index];
+    if (controller != null && controller.value.isInitialized && !controller.value.isPlaying) {
+      controller.play();
+    }
+  }
 }
+

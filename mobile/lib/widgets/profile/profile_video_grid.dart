@@ -6,6 +6,9 @@ class ProfileVideoGrid extends StatelessWidget {
   final bool isPostsTab;
   final Map<String, dynamic>? currentUser;
   final void Function(int) onVideoTap;
+  final void Function(int)? onVideoLongPress;
+  final String? pinnedVideoId;
+  final bool isOwnProfile;
 
   const ProfileVideoGrid({
     super.key,
@@ -13,6 +16,9 @@ class ProfileVideoGrid extends StatelessWidget {
     required this.isPostsTab,
     required this.currentUser,
     required this.onVideoTap,
+    this.onVideoLongPress,
+    this.pinnedVideoId,
+    this.isOwnProfile = false,
   });
 
   String _videoPreviewUrl(Map<String, dynamic> video) {
@@ -66,11 +72,13 @@ class ProfileVideoGrid extends StatelessWidget {
       itemCount: videos.length,
       itemBuilder: (context, index) {
         final item = videos[index] as Map<String, dynamic>;
+        final videoId = (item['_id'] ?? '').toString();
         final previewUrl = _videoPreviewUrl(item);
-        final isPinned = isPostsTab && index == 0; // Mock pinned logic
+        final isPinned = isPostsTab && pinnedVideoId != null && videoId == pinnedVideoId;
 
         return GestureDetector(
           onTap: () => onVideoTap(index),
+          onLongPress: onVideoLongPress != null ? () => onVideoLongPress!(index) : null,
           child: Container(
             decoration: BoxDecoration(
               color: Colors.white.withValues(alpha: 0.05),

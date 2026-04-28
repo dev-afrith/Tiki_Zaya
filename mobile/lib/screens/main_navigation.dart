@@ -7,7 +7,6 @@ import 'package:mobile/screens/upload_screen.dart';
 import 'package:mobile/screens/profile_screen.dart';
 import 'package:mobile/screens/chat_screen.dart';
 import 'package:mobile/services/api_service.dart';
-import 'package:mobile/utils/update_checker.dart';
 import 'package:mobile/services/notification_provider.dart';
 import 'package:provider/provider.dart';
 import 'package:mobile/widgets/badge_icon.dart';
@@ -21,9 +20,10 @@ class MainNavigation extends StatefulWidget {
 
 class _MainNavigationState extends State<MainNavigation> {
   int _currentIndex = 0;
+  final ValueNotifier<bool> _homeActiveNotifier = ValueNotifier(true);
 
-  final List<Widget> _pages = [
-    const HomeScreen(),
+  List<Widget> get _pages => [
+    HomeScreen(isActiveNotifier: _homeActiveNotifier),
     const DiscoverScreen(),
     const UploadScreen(),
     const ChatScreen(),
@@ -36,14 +36,13 @@ class _MainNavigationState extends State<MainNavigation> {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       Provider.of<NotificationProvider>(context, listen: false).fetchCounts();
     });
-    // Automatic check for updates on startup
-    Future.delayed(const Duration(seconds: 2), () {
-      if (mounted) UpdateChecker.checkAndShowDialog(context, silent: true);
-    });
+    // Removed UpdateChecker for now
   }
 
   void _onTabTap(int index) {
     setState(() { _currentIndex = index; });
+    // Notify home screen of active/inactive state
+    _homeActiveNotifier.value = (index == 0);
     // Refresh unread count when navigating away from chat
     if (index != 3) {
       Provider.of<NotificationProvider>(context, listen: false).fetchCounts();

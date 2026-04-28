@@ -678,6 +678,8 @@ class ApiService {
     String messageType = 'text',
     Map<String, dynamic>? sharedVideo,
     String? clientMessageId,
+    String? replyToId,
+    String? replyPreview,
   }) async {
     final token = await getToken();
     final response = await http.post(
@@ -691,6 +693,8 @@ class ApiService {
         'messageType': messageType,
         if (sharedVideo != null) 'sharedVideo': sharedVideo,
         if (clientMessageId != null) 'clientMessageId': clientMessageId,
+        if (replyToId != null) 'replyToId': replyToId,
+        if (replyPreview != null) 'replyPreview': replyPreview,
       }),
     );
     return jsonDecode(response.body);
@@ -1296,4 +1300,68 @@ class ApiService {
       return [];
     }
   }
+
+  // ─── FOLLOWERS / FOLLOWING ────────────────────────────
+
+  static Future<List<dynamic>> getFollowers(String userId) async {
+    try {
+      final response = await http.get(
+        Uri.parse('${ApiConfig.baseUrl}/api/users/$userId/followers'),
+      );
+      if (response.statusCode != 200) return [];
+      final decoded = jsonDecode(response.body);
+      return decoded is List ? decoded : [];
+    } catch (_) {
+      return [];
+    }
+  }
+
+  static Future<List<dynamic>> getFollowing(String userId) async {
+    try {
+      final response = await http.get(
+        Uri.parse('${ApiConfig.baseUrl}/api/users/$userId/following'),
+      );
+      if (response.statusCode != 200) return [];
+      final decoded = jsonDecode(response.body);
+      return decoded is List ? decoded : [];
+    } catch (_) {
+      return [];
+    }
+  }
+
+  // ─── PINNED VIDEO ─────────────────────────────────────
+
+  static Future<Map<String, dynamic>> pinVideo(String videoId) async {
+    final token = await getToken();
+    final response = await http.put(
+      Uri.parse('${ApiConfig.baseUrl}/api/users/pin-video/$videoId'),
+      headers: {'Authorization': 'Bearer $token'},
+    );
+    return jsonDecode(response.body);
+  }
+
+  static Future<Map<String, dynamic>> unpinVideo() async {
+    final token = await getToken();
+    final response = await http.delete(
+      Uri.parse('${ApiConfig.baseUrl}/api/users/pin-video'),
+      headers: {'Authorization': 'Bearer $token'},
+    );
+    return jsonDecode(response.body);
+  }
+
+  // ─── MESSAGE REACTIONS ────────────────────────────────
+
+  static Future<Map<String, dynamic>> reactToMessage(String messageId, String emoji) async {
+    final token = await getToken();
+    final response = await http.post(
+      Uri.parse('${ApiConfig.baseUrl}/api/messages/react/$messageId'),
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': 'Bearer $token',
+      },
+      body: jsonEncode({'emoji': emoji}),
+    );
+    return jsonDecode(response.body);
+  }
 }
+

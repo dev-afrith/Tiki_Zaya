@@ -3,7 +3,7 @@ const mongoose = require('mongoose');
 const cloudinary = require('cloudinary').v2;
 const User = require('../models/User');
 const { createAndEmitNotification } = require('../utils/notifications');
-const { buildGamificationSummary, ensureGamificationState } = require('../utils/gamification');
+const { buildGamificationSummary, ensureGamificationState, awardLikeBonus } = require('../utils/gamification');
 const { generateSignedUploadParams, isValidCloudinaryUrl } = require('../services/cloudinaryService');
 const notificationQueue = require('../services/notificationQueue');
 
@@ -388,11 +388,18 @@ exports.toggleLike = async (req, res) => {
       );
       updatedLikesCount = updated.likesCount;
 
-      // Offload notification to background to prevent blocking
+      // Offload notification + gamification to background to prevent blocking
       process.nextTick(async () => {
         try {
-          const actor = await User.findById(userId).select('username');
+          const actor = await User.findById(userId).select('username gamification');
           if (actor) {
+            // Award gamification points for liking
+            awardLikeBonus(actor);
+            await actor.save();
+            req.app.get('io')?.to(userId).emit('gamification_updated', {
+              gamification: buildGamificationSummary(actor),
+            });
+
             await createAndEmitNotification(req.app.get('io'), {
               userId: video.userId,
               actorUserId: userId,
@@ -404,7 +411,7 @@ exports.toggleLike = async (req, res) => {
             });
           }
         } catch (e) {
-          console.error('Background notification error:', e);
+          console.error('Background like bonus error:', e);
         }
       });
     }

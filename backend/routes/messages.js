@@ -11,6 +11,7 @@ const {
   getUnreadCount,
   markConversationRead,
   acknowledgeReelWatch,
+  reactToMessage,
 } = require('../controllers/messageController');
 
 const storage = multer.diskStorage({
@@ -18,18 +19,18 @@ const storage = multer.diskStorage({
   filename: (req, file, cb) => cb(null, `chat_${Date.now()}${path.extname(file.originalname)}`),
 });
 
-const imageFilter = (req, file, cb) => {
-  if (file.mimetype.startsWith('image/')) {
+const fileFilter = (req, file, cb) => {
+  if (file.mimetype.startsWith('image/') || file.mimetype.startsWith('audio/')) {
     cb(null, true);
   } else {
-    cb(new Error('Only image files are allowed'), false);
+    cb(new Error('Only image/audio files are allowed'), false);
   }
 };
 
 const upload = multer({
   storage,
-  fileFilter: imageFilter,
-  limits: { fileSize: 10 * 1024 * 1024 }, // 10MB
+  fileFilter,
+  limits: { fileSize: 10 * 1024 * 1024 },
 });
 
 router.get('/inbox', auth, getInbox);
@@ -38,5 +39,6 @@ router.get('/:userId', auth, getConversation);
 router.post('/:userId', auth, upload.single('image'), sendMessage);
 router.put('/read/:userId', auth, markConversationRead);
 router.post('/reel/acknowledge', auth, acknowledgeReelWatch);
+router.post('/react/:messageId', auth, reactToMessage);
 
 module.exports = router;

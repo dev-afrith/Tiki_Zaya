@@ -14,6 +14,10 @@ const {
 	uploadProfileImage,
 	saveDeviceToken,
 	deleteAccount,
+	getFollowers,
+	getFollowing,
+	pinVideo,
+	unpinVideo,
 } = require('../controllers/userController');
 
 const storage = multer.memoryStorage();
@@ -22,6 +26,8 @@ const upload = multer({ storage, limits: { fileSize: 10 * 1024 * 1024 } });
 router.get('/search', searchUsers);
 router.get('/suggested', getSuggestedUsers);
 router.get('/:id/reposts', getReposts);
+router.get('/:id/followers', getFollowers);
+router.get('/:id/following', getFollowing);
 router.get('/:id', getProfile);
 router.put('/update', auth, updateProfile);
 router.post('/device-token', auth, saveDeviceToken);
@@ -29,6 +35,8 @@ router.post('/upload-profile-pic', auth, upload.single('image'), uploadProfileIm
 router.put('/follow/:id', auth, toggleFollow);
 router.put('/privacy', auth, togglePrivacy);
 router.put('/repost/:id', auth, toggleRepost);
+router.put('/pin-video/:videoId', auth, pinVideo);
+router.delete('/pin-video', auth, unpinVideo);
 router.delete('/delete-account', auth, deleteAccount);
 
 module.exports = router;

@@ -32,6 +32,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
   bool _isLoading = true;
   bool _isFollowing = false;
   String? _currentUserId;
+  String? _pinnedVideoId; // Currently pinned video ID
   int _selectedTab = 0; // 0: posts, 1: reposts
   int _tzPoints = 0;
   int _streakDays = 0;
@@ -73,6 +74,9 @@ class _ProfileScreenState extends State<ProfileScreen> {
           _user = profile.isNotEmpty ? profile : null;
           _userVideos = videos;
           _repostedVideos = reposts;
+          _pinnedVideoId = (profile['pinnedVideoId'] ?? '').toString().isEmpty
+              ? null
+              : profile['pinnedVideoId']?.toString();
           final gamification = (widget.userId == null ? summary['gamification'] : profile['gamification']) as Map<String, dynamic>?;
           _tzPoints = _readInt(gamification?['points'], _tzPoints);
           _streakDays = _readInt(gamification?['streakDays'], _streakDays);
@@ -127,6 +131,127 @@ class _ProfileScreenState extends State<ProfileScreen> {
         (route) => false,
       );
     }
+  }
+
+  // ─── PIN VIDEO ────────────────────────────────────
+
+  Future<void> _pinVideo(String videoId) async {
+    try {
+      await ApiService.pinVideo(videoId);
+      if (mounted) setState(() => _pinnedVideoId = videoId);
+    } catch (_) {}
+  }
+
+  Future<void> _unpinVideo() async {
+    try {
+      await ApiService.unpinVideo();
+      if (mounted) setState(() => _pinnedVideoId = null);
+    } catch (_) {}
+  }
+
+  void _showPinMenu(String videoId) {
+    final isPinned = _pinnedVideoId == videoId;
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: const Color(0xFF12162A),
+      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(18))),
+      builder: (_) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const SizedBox(height: 8),
+            Container(width: 38, height: 4, decoration: BoxDecoration(color: Colors.white24, borderRadius: BorderRadius.circular(99))),
+            const SizedBox(height: 12),
+            if (!isPinned)
+              ListTile(
+                leading: const Icon(Icons.push_pin_rounded, color: Color(0xFFFF006E)),
+                title: const Text('Pin to profile', style: TextStyle(color: Colors.white)),
+                onTap: () { Navigator.pop(context); _pinVideo(videoId); },
+              ),
+            if (isPinned)
+              ListTile(
+                leading: const Icon(Icons.push_pin_outlined, color: Colors.white54),
+                title: const Text('Unpin from profile', style: TextStyle(color: Colors.white)),
+                onTap: () { Navigator.pop(context); _unpinVideo(); },
+              ),
+            const SizedBox(height: 8),
+          ],
+        ),
+      ),
+    );
+  }
+
+  // ─── FOLLOWERS / FOLLOWING LIST ───────────────────
+
+  void _openFollowersList() async {
+    final targetId = widget.userId ?? _currentUserId ?? '';
+    if (targetId.isEmpty) return;
+    final list = await ApiService.getFollowers(targetId);
+    if (!mounted) return;
+    _showUserListSheet('Followers', list);
+  }
+
+  void _openFollowingList() async {
+    final targetId = widget.userId ?? _currentUserId ?? '';
+    if (targetId.isEmpty) return;
+    final list = await ApiService.getFollowing(targetId);
+    if (!mounted) return;
+    _showUserListSheet('Following', list);
+  }
+
+  void _showUserListSheet(String title, List<dynamic> users) {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: const Color(0xFF0F0F12),
+      isScrollControlled: true,
+      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
+      builder: (_) => DraggableScrollableSheet(
+        expand: false,
+        initialChildSize: 0.6,
+        maxChildSize: 0.92,
+        builder: (_, scrollController) => Column(
+          children: [
+            Padding(
+              padding: const EdgeInsets.symmetric(vertical: 12),
+              child: Column(
+                children: [
+                  Container(width: 38, height: 4, decoration: BoxDecoration(color: Colors.white24, borderRadius: BorderRadius.circular(99))),
+                  const SizedBox(height: 10),
+                  Text(title, style: const TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.w700)),
+                ],
+              ),
+            ),
+            const Divider(color: Colors.white12, height: 1),
+            Expanded(
+              child: users.isEmpty
+                  ? Center(child: Text('No $title yet', style: const TextStyle(color: Colors.white38)))
+                  : ListView.builder(
+                      controller: scrollController,
+                      itemCount: users.length,
+                      itemBuilder: (_, i) {
+                        final u = users[i] as Map<String, dynamic>;
+                        final pic = (u['profilePic'] ?? '').toString();
+                        final uname = (u['username'] ?? '').toString();
+                        return ListTile(
+                          leading: CircleAvatar(
+                            backgroundColor: const Color(0xFF1B2036),
+                            backgroundImage: pic.isNotEmpty ? NetworkImage(pic) : null,
+                            child: pic.isEmpty ? Text(uname.isNotEmpty ? uname[0].toUpperCase() : 'U', style: const TextStyle(color: Colors.white)) : null,
+                          ),
+                          title: Text('@$uname', style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w600)),
+                          subtitle: Text((u['bio'] ?? '').toString().isEmpty ? '' : (u['bio'] ?? '').toString(), style: const TextStyle(color: Colors.white38, fontSize: 12), maxLines: 1, overflow: TextOverflow.ellipsis),
+                          onTap: () {
+                            Navigator.pop(context);
+                            Navigator.push(context, MaterialPageRoute(builder: (_) => ProfileScreen(userId: (u['_id'] ?? u['id'] ?? '').toString())));
+                          },
+                        );
+                      },
+                    ),
+            ),
+          ],
+        ),
+      ),
+    );
   }
 
   Future<void> _shareProfile() async {
@@ -578,6 +703,8 @@ class _ProfileScreenState extends State<ProfileScreen> {
               postsCount: _userVideos.length,
               followersCount: _followersCount,
               followingCount: _followingCount,
+              onFollowersTap: _openFollowersList,
+              onFollowingTap: _openFollowingList,
             ),
 
             // 3. Action Buttons
@@ -606,8 +733,9 @@ class _ProfileScreenState extends State<ProfileScreen> {
 
             const SizedBox(height: 16),
 
-            // 5. Streak Widget
-            ProfileStreakWidget(streakDays: _streakDays),
+            // 5. Streak Widget — only show to own profile
+            if (isOwnProfile)
+              ProfileStreakWidget(streakDays: _streakDays),
 
             const SizedBox(height: 24),
 
@@ -624,6 +752,8 @@ class _ProfileScreenState extends State<ProfileScreen> {
               videos: _selectedTab == 0 ? _userVideos : _repostedVideos,
               isPostsTab: _selectedTab == 0,
               currentUser: _user,
+              pinnedVideoId: _pinnedVideoId,
+              isOwnProfile: isOwnProfile,
               onVideoTap: (index) {
                 Navigator.push(
                   context,
@@ -636,6 +766,13 @@ class _ProfileScreenState extends State<ProfileScreen> {
                   ),
                 );
               },
+              onVideoLongPress: isOwnProfile && _selectedTab == 0
+                  ? (index) {
+                      final v = _userVideos[index] as Map<String, dynamic>;
+                      final videoId = (v['_id'] ?? '').toString();
+                      if (videoId.isNotEmpty) _showPinMenu(videoId);
+                    }
+                  : null,
             ),
             
             const SizedBox(height: 40),

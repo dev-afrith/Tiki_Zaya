@@ -294,6 +294,7 @@ class _ChatThreadScreenState extends State<ChatThreadScreen> {
   String? _seenAtText;
   int _tempIdCounter = 0;
   int _interactionStreakCount = 0;
+  Map<String, dynamic>? _replyingTo; // message being replied to
 
   @override
   void initState() {
@@ -467,6 +468,18 @@ class _ChatThreadScreenState extends State<ChatThreadScreen> {
       }
     });
 
+    // Message reactions from server
+    _socket?.on('message_reaction', (data) {
+      if (!mounted || data == null) return;
+      final msgId = data['messageId']?.toString() ?? '';
+      final reactions = data['reactions'];
+      if (msgId.isNotEmpty && _messageMap.containsKey(msgId)) {
+        setState(() {
+          _messageMap[msgId]!['reactions'] = reactions ?? {};
+        });
+      }
+    });
+
     _socket?.connect();
   }
 
@@ -480,6 +493,21 @@ class _ChatThreadScreenState extends State<ChatThreadScreen> {
     _isTyping = false;
     _socket?.emit('typing', {'toUserId': widget.peerUserId, 'isTyping': false});
 
+    final replyId = _replyingTo?['_id']?.toString() ?? _replyingTo?['clientMessageId']?.toString();
+    String? replyPreview;
+    if (_replyingTo != null) {
+      final msgType = _replyingTo!['messageType']?.toString() ?? 'text';
+      if (msgType == 'text') {
+        replyPreview = _replyingTo!['text']?.toString() ?? '';
+      } else if (msgType == 'image') {
+        replyPreview = 'Image';
+      } else if (msgType == 'voice') {
+        replyPreview = 'Voice Message';
+      } else if (msgType == 'reel') {
+        replyPreview = 'Reel';
+      }
+    }
+
     // Add optimistic message
     final clientMessageId = _uuid.v4();
     final now = DateTime.now().toUtc().toIso8601String();
@@ -492,12 +520,15 @@ class _ChatThreadScreenState extends State<ChatThreadScreen> {
       'messageType': 'text',
       'status': 'sending',
       'createdAt': now,
+      if (replyId != null) 'replyToId': replyId,
+      if (replyPreview != null) 'replyPreview': replyPreview,
     };
 
     setState(() {
       _messageMap[clientMessageId] = optimistic;
       _isSending = true;
       _peerHasSeenLatest = false;
+      _replyingTo = null; // Clear reply state
     });
     _scrollToBottom();
 
@@ -506,6 +537,8 @@ class _ChatThreadScreenState extends State<ChatThreadScreen> {
         widget.peerUserId, 
         text,
         clientMessageId: clientMessageId,
+        replyToId: replyId,
+        replyPreview: replyPreview,
       );
       if (mounted) {
         final serverId = result['_id']?.toString() ?? '';
@@ -865,57 +898,7 @@ class _ChatThreadScreenState extends State<ChatThreadScreen> {
                             ),
 
                           // Message bubble
-                          Align(
-                            alignment: isMine ? Alignment.centerRight : Alignment.centerLeft,
-                            child: GestureDetector(
-                              onTap: status == 'failed'
-                                  ? () => _retryMessage(_extractId(item))
-                                  : null,
-                              child: Container(
-                                margin: EdgeInsets.only(
-                                  top: isFirst ? 6 : 1.5,
-                                  bottom: isLast ? 6 : 1.5,
-                                ),
-                                padding: messageType == 'image'
-                                    ? const EdgeInsets.all(3)
-                                    : const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-                                constraints: BoxConstraints(maxWidth: MediaQuery.of(context).size.width * 0.72),
-                                decoration: BoxDecoration(
-                                  color: isMine ? const Color(0xFFFF006E) : const Color(0xFF1B2036),
-                                  borderRadius: _bubbleRadius(isMine, isFirst, isLast),
-                                ),
-                                child: Column(
-                                  crossAxisAlignment: CrossAxisAlignment.end,
-                                  children: [
-                                    _buildMessageContent(item, isMine, messageType),
-                                    // Time + status
-                                    if (isLast)
-                                      Padding(
-                                        padding: messageType == 'image'
-                                            ? const EdgeInsets.only(top: 4, right: 6, bottom: 2)
-                                            : const EdgeInsets.only(top: 4),
-                                        child: Row(
-                                          mainAxisSize: MainAxisSize.min,
-                                          children: [
-                                            Text(
-                                              _formatMessageTime(item['createdAt']?.toString()),
-                                              style: GoogleFonts.poppins(
-                                                color: isMine ? Colors.white60 : Colors.white38,
-                                                fontSize: 10,
-                                              ),
-                                            ),
-                                            if (isMine) ...[
-                                              const SizedBox(width: 4),
-                                              _buildStatusIcon(status),
-                                            ],
-                                          ],
-                                        ),
-                                      ),
-                                  ],
-                                ),
-                              ),
-                            ),
-                          ),
+                          _buildMessageBubble(item, isMine, isFirst, isLast, messageType, status),
                         ],
                       );
                     },
@@ -925,14 +908,50 @@ class _ChatThreadScreenState extends State<ChatThreadScreen> {
           // Input bar
           SafeArea(
             top: false,
-            child: Container(
-              padding: const EdgeInsets.fromLTRB(10, 8, 10, 10),
-              decoration: BoxDecoration(
-                color: Colors.black,
-                border: Border(top: BorderSide(color: Colors.white.withValues(alpha: 0.08))),
-              ),
-              child: Row(
-                children: [
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                if (_replyingTo != null)
+                  Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFF1B2036),
+                      border: Border(bottom: BorderSide(color: Colors.white.withValues(alpha: 0.1))),
+                    ),
+                    child: Row(
+                      children: [
+                        const Icon(Icons.reply_rounded, color: Colors.white54, size: 20),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text('Replying to message', style: GoogleFonts.outfit(color: const Color(0xFFFF006E), fontSize: 12, fontWeight: FontWeight.w600)),
+                              Text(
+                                _replyingTo!['text']?.toString().isNotEmpty == true ? _replyingTo!['text'].toString() : 'Attachment',
+                                style: GoogleFonts.outfit(color: Colors.white70, fontSize: 13),
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ],
+                          ),
+                        ),
+                        IconButton(
+                          icon: const Icon(Icons.close, color: Colors.white54, size: 20),
+                          onPressed: () => setState(() => _replyingTo = null),
+                        ),
+                      ],
+                    ),
+                  ),
+                Container(
+                  padding: const EdgeInsets.fromLTRB(10, 8, 10, 10),
+                  decoration: BoxDecoration(
+                    color: Colors.black,
+                    border: Border(top: BorderSide(color: Colors.white.withValues(alpha: 0.08))),
+                  ),
+                  child: Row(
+                    children: [
                   // Gallery button
                   GestureDetector(
                     onTap: _isUploadingImage ? null : _sendImage,
@@ -1017,6 +1036,164 @@ class _ChatThreadScreenState extends State<ChatThreadScreen> {
         bottomLeft: isLast ? r : small,
       );
     }
+  }
+
+  // ─────────────────── MESSAGE BUBBLE & INTERACTIONS ───────────────────
+
+  Widget _buildMessageBubble(Map<String, dynamic> item, bool isMine, bool isFirst, bool isLast, String messageType, String status) {
+    final msgId = _extractId(item);
+    final reactions = item['reactions'] as Map<String, dynamic>? ?? {};
+    final replyPreview = item['replyPreview']?.toString();
+    final hasReactions = reactions.isNotEmpty;
+    final myReaction = reactions[_currentUserId];
+
+    Widget bubbleContent = Container(
+      margin: EdgeInsets.only(
+        top: isFirst ? 6 : 1.5,
+        bottom: isLast ? 6 : 1.5,
+      ),
+      padding: messageType == 'image'
+          ? const EdgeInsets.all(3)
+          : const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+      constraints: BoxConstraints(maxWidth: MediaQuery.of(context).size.width * 0.72),
+      decoration: BoxDecoration(
+        color: isMine ? const Color(0xFFFF006E) : const Color(0xFF1B2036),
+        borderRadius: _bubbleRadius(isMine, isFirst, isLast),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.end,
+        children: [
+          if (replyPreview != null && replyPreview.isNotEmpty)
+            Container(
+              margin: const EdgeInsets.only(bottom: 6),
+              padding: const EdgeInsets.only(left: 8, top: 4, bottom: 4),
+              decoration: BoxDecoration(
+                border: Border(left: BorderSide(color: isMine ? Colors.white54 : const Color(0xFFFF006E), width: 3)),
+              ),
+              child: Text(
+                replyPreview,
+                style: GoogleFonts.outfit(color: isMine ? Colors.white.withValues(alpha: 0.8) : Colors.white70, fontSize: 12),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
+          _buildMessageContent(item, isMine, messageType),
+          if (isLast)
+            Padding(
+              padding: messageType == 'image'
+                  ? const EdgeInsets.only(top: 4, right: 6, bottom: 2)
+                  : const EdgeInsets.only(top: 4),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    _formatMessageTime(item['createdAt']?.toString()),
+                    style: GoogleFonts.poppins(
+                      color: isMine ? Colors.white60 : Colors.white38,
+                      fontSize: 10,
+                    ),
+                  ),
+                  if (isMine) ...[
+                    const SizedBox(width: 4),
+                    _buildStatusIcon(status),
+                  ],
+                ],
+              ),
+            ),
+        ],
+      ),
+    );
+
+    // Wrap with Reaction Display if any
+    if (hasReactions) {
+      bubbleContent = Stack(
+        clipBehavior: Clip.none,
+        children: [
+          bubbleContent,
+          Positioned(
+            bottom: isLast ? -6 : 0,
+            right: isMine ? 12 : null,
+            left: isMine ? null : 12,
+            child: Container(
+              padding: const EdgeInsets.all(4),
+              decoration: BoxDecoration(
+                color: const Color(0xFF1B2036),
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: Colors.black, width: 2),
+              ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: reactions.values.map((emoji) => Text(emoji.toString(), style: const TextStyle(fontSize: 12))).toList(),
+              ),
+            ),
+          ),
+        ],
+      );
+    }
+
+    final dismissible = Dismissible(
+      key: ValueKey('swipe_$msgId'),
+      direction: isMine ? DismissDirection.endToStart : DismissDirection.startToEnd,
+      confirmDismiss: (direction) async {
+        setState(() => _replyingTo = item);
+        return false;
+      },
+      background: Container(
+        alignment: isMine ? Alignment.centerRight : Alignment.centerLeft,
+        padding: const EdgeInsets.symmetric(horizontal: 20),
+        child: const Icon(Icons.reply_rounded, color: Colors.white54),
+      ),
+      child: Align(
+        alignment: isMine ? Alignment.centerRight : Alignment.centerLeft,
+        child: GestureDetector(
+          onTap: status == 'failed' ? () => _retryMessage(msgId) : null,
+          onLongPress: () => _showReactionMenu(msgId, item),
+          child: bubbleContent,
+        ),
+      ),
+    );
+
+    if (hasReactions && isLast) {
+      return Padding(padding: const EdgeInsets.only(bottom: 12), child: dismissible);
+    }
+    return dismissible;
+  }
+
+  void _showReactionMenu(String msgId, Map<String, dynamic> item) {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.transparent,
+      builder: (_) => Container(
+        margin: const EdgeInsets.all(16),
+        padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 16),
+        decoration: BoxDecoration(
+          color: const Color(0xFF1B2036),
+          borderRadius: BorderRadius.circular(24),
+        ),
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+          children: ['❤️', '😂', '😮', '😢', '🔥', '👍'].map((emoji) {
+            return GestureDetector(
+              onTap: () async {
+                Navigator.pop(context);
+                final prevReactions = Map<String, dynamic>.from(item['reactions'] ?? {});
+                setState(() {
+                  final rx = Map<String, dynamic>.from(prevReactions);
+                  rx[_currentUserId!] = emoji;
+                  item['reactions'] = rx;
+                });
+                try {
+                  await ApiService.reactToMessage(msgId, emoji);
+                } catch (_) {
+                  setState(() => item['reactions'] = prevReactions);
+                }
+              },
+              child: Text(emoji, style: const TextStyle(fontSize: 28)),
+            );
+          }).toList(),
+        ),
+      ),
+    );
   }
 
   // ─────────────────── MESSAGE CONTENT ───────────────────

@@ -54,6 +54,24 @@ const messageSchema = new mongoose.Schema({
     type: String,
     index: true,
   },
+  reactions: {
+    type: Map,
+    of: String, // userId -> emoji
+    default: {},
+  },
+  replyToId: {
+    type: String,
+    default: null,
+  },
+  replyPreview: {
+    text: { type: String, default: '' },
+    messageType: { type: String, default: 'text' },
+    fromUsername: { type: String, default: '' },
+  },
+  voiceUrl: {
+    type: String,
+    default: '',
+  },
 }, { timestamps: true });
 
 messageSchema.index({ fromUserId: 1, toUserId: 1, createdAt: -1 });

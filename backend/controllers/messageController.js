@@ -357,3 +357,48 @@ exports.acknowledgeReelWatch = async (req, res) => {
     return res.status(500).json({ error: error.message });
   }
 };
+
+exports.reactToMessage = async (req, res) => {
+  try {
+    const messageId = req.params.messageId;
+    const userId = req.userId;
+    const emoji = (req.body.emoji || '').trim();
+
+    const message = await Message.findById(messageId);
+    if (!message) return res.status(404).json({ message: 'Message not found' });
+
+    // Only participants can react
+    const participants = [message.fromUserId.toString(), message.toUserId.toString()];
+    if (!participants.includes(userId)) {
+      return res.status(403).json({ message: 'Not a participant' });
+    }
+
+    const reactions = message.reactions || new Map();
+    if (!emoji) {
+      // Remove reaction if emoji is empty
+      reactions.delete(userId);
+    } else {
+      reactions.set(userId, emoji);
+    }
+    message.reactions = reactions;
+    await message.save();
+
+    // Emit to both participants
+    const io = req.app.get('io');
+    if (io) {
+      const room = [message.fromUserId, message.toUserId].sort().join('__');
+      io.to(room).emit('message_reaction', {
+        messageId: message._id,
+        reactions: Object.fromEntries(reactions),
+      });
+    }
+
+    return res.status(200).json({
+      ok: true,
+      messageId: message._id,
+      reactions: Object.fromEntries(message.reactions),
+    });
+  } catch (error) {
+    return res.status(500).json({ error: error.message });
+  }
+};

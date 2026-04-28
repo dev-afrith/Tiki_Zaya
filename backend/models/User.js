@@ -147,7 +147,8 @@ const userSchema = new mongoose.Schema({
   },
   followers: [{ type: String, ref: 'User' }], // References Firebase UIDs
   following: [{ type: String, ref: 'User' }],  // References Firebase UIDs
-  reposts: [{ type: mongoose.Schema.Types.ObjectId, ref: 'Video' }]
+  reposts: [{ type: mongoose.Schema.Types.ObjectId, ref: 'Video' }],
+  pinnedVideoId: { type: String, default: null }, // User-selected pinned video
 }, { 
   timestamps: true,
   _id: false // Disable auto-generation of ObjectIds because we use Firebase UIDs

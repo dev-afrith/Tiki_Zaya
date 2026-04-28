@@ -49,19 +49,26 @@ const sendFcmPush = async (userId, payload) => {
 };
 
 const buildPayload = async (notification) => {
-  const actor = notification.senderId && notification.senderId !== 'system'
-    ? await User.findById(notification.senderId).select('username profilePic')
+  const actorId = notification.actorUserId || notification.senderId;
+  const actor = actorId && actorId !== 'system'
+    ? await User.findById(actorId).select('username profilePic')
     : null;
 
   return {
     _id: notification._id,
     userId: notification.userId,
-    senderId: notification.senderId,
+    senderId: actorId, // keep for backward compatibility
+    actorUserId: actorId,
     type: notification.type,
-    message: notification.message,
-    videoId: notification.videoId,
+    title: notification.title || '',
+    message: notification.body || notification.message || '',
+    body: notification.body || notification.message || '',
+    videoId: notification.entityId || notification.videoId || '',
+    entityId: notification.entityId || notification.videoId || '',
+    entityType: notification.entityType || '',
     actor,
-    isRead: notification.isRead,
+    isRead: notification.isRead === true || notification.readAt != null,
+    readAt: notification.readAt,
     createdAt: notification.createdAt,
   };
 };
@@ -74,15 +81,23 @@ exports.createAndEmitNotification = async (io, data) => {
   const notification = await Notification.create({
     userId: data.userId.toString(),
     senderId: data.actorUserId.toString(),
+    actorUserId: data.actorUserId.toString(),
     type: data.type,
+    title: data.title || '',
     message: data.body,
+    body: data.body,
     videoId: data.entityId ? data.entityId.toString() : '',
+    entityId: data.entityId ? data.entityId.toString() : '',
+    entityType: data.entityType || '',
   });
 
   const payload = await buildPayload(notification);
   
   // Compute unread count to emit
-  const unreadCount = await Notification.countDocuments({ userId: data.userId.toString(), isRead: false });
+  const unreadCount = await Notification.countDocuments({ 
+    userId: data.userId.toString(), 
+    $or: [{ isRead: false }, { isRead: { $exists: false }, readAt: null }] 
+  });
 
   if (io) {
     io.to(notification.userId).emit('new_notification', { notification: payload, unreadCount });
@@ -100,14 +115,22 @@ exports.createSystemNotification = async (io, data) => {
   const notification = await Notification.create({
     userId: data.userId.toString(),
     senderId: data.actorUserId || 'system',
+    actorUserId: data.actorUserId || 'system',
     type: data.type,
+    title: data.title || '',
     message: data.body,
+    body: data.body,
     videoId: data.entityId ? data.entityId.toString() : '',
+    entityId: data.entityId ? data.entityId.toString() : '',
+    entityType: data.entityType || '',
   });
 
   const payload = await buildPayload(notification);
   
-  const unreadCount = await Notification.countDocuments({ userId: data.userId.toString(), isRead: false });
+  const unreadCount = await Notification.countDocuments({ 
+    userId: data.userId.toString(), 
+    $or: [{ isRead: false }, { isRead: { $exists: false }, readAt: null }] 
+  });
 
   if (io) {
     io.to(notification.userId).emit('new_notification', { notification: payload, unreadCount });

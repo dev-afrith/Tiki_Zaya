@@ -428,3 +428,61 @@ exports.deleteAccount = async (req, res) => {
     return res.status(500).json({ error: error.message });
   }
 };
+
+// Get followers list for a user
+exports.getFollowers = async (req, res) => {
+  try {
+    const user = await User.findById(req.params.id).select('followers');
+    if (!user) return res.status(404).json({ message: 'User not found' });
+
+    const followers = await User.find({ _id: { $in: user.followers } })
+      .select('username profilePic bio');
+    return res.status(200).json(followers);
+  } catch (error) {
+    return res.status(500).json({ error: error.message });
+  }
+};
+
+// Get following list for a user
+exports.getFollowing = async (req, res) => {
+  try {
+    const user = await User.findById(req.params.id).select('following');
+    if (!user) return res.status(404).json({ message: 'User not found' });
+
+    const following = await User.find({ _id: { $in: user.following } })
+      .select('username profilePic bio');
+    return res.status(200).json(following);
+  } catch (error) {
+    return res.status(500).json({ error: error.message });
+  }
+};
+
+// Pin a video to the user's profile
+exports.pinVideo = async (req, res) => {
+  try {
+    const videoId = req.params.videoId;
+    const video = await Video.findById(videoId);
+    if (!video) return res.status(404).json({ message: 'Video not found' });
+    if (video.userId.toString() !== req.userId.toString()) {
+      return res.status(403).json({ message: 'You can only pin your own videos' });
+    }
+    const user = await User.findByIdAndUpdate(
+      req.userId,
+      { $set: { pinnedVideoId: videoId } },
+      { new: true }
+    );
+    return res.status(200).json({ ok: true, pinnedVideoId: user.pinnedVideoId });
+  } catch (error) {
+    return res.status(500).json({ error: error.message });
+  }
+};
+
+// Unpin the video from profile
+exports.unpinVideo = async (req, res) => {
+  try {
+    await User.findByIdAndUpdate(req.userId, { $set: { pinnedVideoId: null } });
+    return res.status(200).json({ ok: true, pinnedVideoId: null });
+  } catch (error) {
+    return res.status(500).json({ error: error.message });
+  }
+};

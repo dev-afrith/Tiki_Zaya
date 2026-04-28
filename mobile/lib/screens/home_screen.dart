@@ -19,6 +19,7 @@ import 'package:provider/provider.dart';
 import 'package:mobile/services/auth_provider.dart';
 import 'package:mobile/services/feed_provider.dart';
 import 'package:mobile/services/video_preload_manager.dart';
+import 'package:mobile/services/notification_provider.dart';
 import 'dart:async';
 
 // ─────────────────────────────────────────────────────────────
@@ -26,7 +27,8 @@ import 'dart:async';
 // ─────────────────────────────────────────────────────────────
 
 class HomeScreen extends StatefulWidget {
-  const HomeScreen({super.key});
+  final ValueNotifier<bool>? isActiveNotifier;
+  const HomeScreen({super.key, this.isActiveNotifier});
 
   @override
   State<HomeScreen> createState() => _HomeScreenState();
@@ -48,10 +50,22 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
       duration: const Duration(milliseconds: 2200),
     )..repeat(reverse: true);
     _loadData();
+    widget.isActiveNotifier?.addListener(_onActiveChanged);
+  }
+
+  void _onActiveChanged() {
+    if (widget.isActiveNotifier?.value == false) {
+      // Pause current video when switching away from home tab
+      _preloadManager.pauseAll();
+    } else {
+      // Resume when coming back
+      _preloadManager.resumeCurrentIndex(_focusedIndex);
+    }
   }
 
   @override
   void dispose() {
+    widget.isActiveNotifier?.removeListener(_onActiveChanged);
     _titleGlowController.dispose();
     _pageController.dispose();
     _preloadManager.disposeAll();
@@ -68,6 +82,13 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
       await _maybeShowWelcome(summary);
       await _loadNotifications();
       await feed.fetchFeed(reset: true);
+    } catch (_) {}
+  }
+
+  Future<void> _loadNotifications() async {
+    if (!mounted) return;
+    try {
+      await Provider.of<NotificationProvider>(context, listen: false).fetchCounts();
     } catch (_) {}
   }
 
@@ -190,8 +211,25 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
         }
 
         if (feed.videos.isEmpty) {
-          return const Center(
-            child: Text('No videos yet. Upload your first reel!', style: TextStyle(color: Colors.white70)),
+          // Only show empty state if we've finished loading (not a cold start)
+          if (feed.isLoading) {
+            return const Center(child: CircularProgressIndicator(color: Color(0xFFFF006E)));
+          }
+          return Center(
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                const Icon(Icons.video_library_outlined, color: Colors.white24, size: 60),
+                const SizedBox(height: 12),
+                const Text('No videos yet', style: TextStyle(color: Colors.white54, fontSize: 16)),
+                const SizedBox(height: 8),
+                ElevatedButton(
+                  style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFFFF006E)),
+                  onPressed: _refresh,
+                  child: const Text('Refresh', style: TextStyle(color: Colors.white)),
+                ),
+              ],
+            ),
           );
         }
 
@@ -333,6 +371,8 @@ class _FeedPostState extends State<FeedPost> {
   bool _isArchived = false;
   bool _isHiddenFromFeed = false;
   bool _hasVideoError = false;
+  bool _isMuted = false;
+  bool _isIn2xMode = false; // long-press 2x speed
   int _likesCount = 0;
   int _favoritesCount = 0;
   int _repostsCount = 0;
@@ -551,8 +591,7 @@ class _FeedPostState extends State<FeedPost> {
   }
 
   Future<void> _toggleLike() async {
-    if (_isLikeRequestInFlight) return; // Debounce
-
+    // Optimistic update — no debounce needed, just flip UI immediately
     final auth = Provider.of<AuthProvider>(context, listen: false);
     final feed = Provider.of<FeedProvider>(context, listen: false);
     if (!auth.isAuthenticated) return;
@@ -561,44 +600,34 @@ class _FeedPostState extends State<FeedPost> {
     final videoId = (widget.video['_id'] ?? '').toString();
     if (userId.isEmpty || videoId.isEmpty) return;
 
+    // Flip UI instantly
+    final wasLiked = _isLiked;
     setState(() {
-      _isLikeRequestInFlight = true;
       _isLiked = !_isLiked;
       _likesCount += _isLiked ? 1 : -1;
     });
 
-    try {
-      final result = await ApiService.toggleLike(videoId);
-      
-      // Update feed silently so when navigating back, state is fresh
+    // Fire-and-forget — don't block UI
+    ApiService.toggleLike(videoId).then((result) {
       final latestLikesCount = result['likesCount'] ?? _likesCount;
       feed.updateVideoSilently(videoId, {
         'likesCount': latestLikesCount,
-        'likes': result['likes'] ?? [] // Some endpoints might return full array, some just counts
       });
-      
       if (mounted) {
         setState(() {
           _likesCount = (latestLikesCount as num).toInt();
         });
       }
-    } catch (e) {
+    }).catchError((e) {
       debugPrint('Like error: $e');
       if (mounted) {
+        // Revert on failure
         setState(() {
-          // Revert UI on failure
-          _isLiked = !_isLiked;
-          _likesCount += _isLiked ? 1 : -1;
-        });
-        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Failed to like video')));
-      }
-    } finally {
-      if (mounted) {
-        setState(() {
-          _isLikeRequestInFlight = false;
+          _isLiked = wasLiked;
+          _likesCount += wasLiked ? 1 : -1;
         });
       }
-    }
+    });
   }
 
   Future<void> _toggleFavorite() async {
@@ -1377,7 +1406,7 @@ class _FeedPostState extends State<FeedPost> {
           onDoubleTapDown: _handleDoubleTap,
           style: _animationStyle,
           child: GestureDetector(
-            onTap: () {
+          onTap: () {
               if (_isInitialized) {
                 if (_controller.value.isPlaying) {
                   _controller.pause();
@@ -1386,6 +1415,18 @@ class _FeedPostState extends State<FeedPost> {
                   _controller.play();
                   setState(() { _showPauseIcon = false; });
                 }
+              }
+            },
+            onLongPressStart: (_) {
+              if (_isInitialized) {
+                _controller.setPlaybackSpeed(2.0);
+                setState(() { _isIn2xMode = true; });
+              }
+            },
+            onLongPressEnd: (_) {
+              if (_isInitialized) {
+                _controller.setPlaybackSpeed(1.0);
+                setState(() { _isIn2xMode = false; });
               }
             },
             child: Container(
@@ -1443,6 +1484,52 @@ class _FeedPostState extends State<FeedPost> {
               ),
             ),
           ),
+
+        // ── 2x SPEED BADGE ──
+        if (_isIn2xMode)
+          Positioned(
+            top: MediaQuery.of(context).padding.top + 60,
+            right: 12,
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+              decoration: BoxDecoration(
+                color: Colors.black.withValues(alpha: 0.6),
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(color: Colors.white30),
+              ),
+              child: const Text(
+                '2×',
+                style: TextStyle(color: Colors.white, fontWeight: FontWeight.w800, fontSize: 14),
+              ),
+            ),
+          ),
+
+        // ── MUTE BUTTON ──
+        Positioned(
+          top: MediaQuery.of(context).padding.top + 56,
+          left: 12,
+          child: GestureDetector(
+            onTap: () {
+              setState(() { _isMuted = !_isMuted; });
+              if (_isInitialized) {
+                _controller.setVolume(_isMuted ? 0.0 : 1.0);
+              }
+            },
+            child: Container(
+              width: 36,
+              height: 36,
+              decoration: BoxDecoration(
+                color: Colors.black.withValues(alpha: 0.5),
+                shape: BoxShape.circle,
+              ),
+              child: Icon(
+                _isMuted ? Icons.volume_off_rounded : Icons.volume_up_rounded,
+                color: Colors.white,
+                size: 18,
+              ),
+            ),
+          ),
+        ),
 
         // ── TEXT OVERLAYS (from editor) ──
         ...texts.map((t) {
